@@ -456,28 +456,90 @@ function respotBall(num){const b=balls.find(b=>b.num===num);if(!b)return;b.pocke
 // ── Drawing ───────────────────────────────────────────────────────
 function drawTable(){
   if(sprOk('table')){
-    ctx.drawImage(SPRITES['table'],0,0,TABLE_W,TABLE_H);
+    const T=720; // source tile size in tileset
+    // dt(row, col, destX, destY, destW, destH)
+    function dt(r,c,dx,dy,dw,dh){
+      ctx.drawImage(SPRITES['table'],c*T,r*T,T,T,dx,dy,dw,dh);
+    }
+    // ── Layout constants ──────────────────────────────────────────
+    // Top/bottom long rail assembly (left→right):
+    //   [corner CW] [adj AW] [rail RW] [pkt-adj PAW] [pocket PW] [pkt-adj PAW] [rail RW] [adj AW] [corner CW]
+    // Left/right short rail assembly (top→bottom):
+    //   [adj-side AH] [middle rail MH] [adj-side AH]  (corners are part of long rail rows)
+    const CW=RAIL_W, CH=RAIL_W; // corner tile: 38×38
+    const AW=30;   // adj-to-corner on long rail
+    const PAW=30;  // adj-to-pocket on long rail
+    const PW=36;   // pocket tile width (centers at TABLE_W/2 = 374)
+    // RW: straight rail segment each side — computed to fill exactly TABLE_W
+    // CW+AW+RW+PAW+PW/2 = TABLE_W/2  →  RW = 374-38-30-30-18 = 258
+    const RW=TABLE_W/2-CW-AW-PAW-PW/2; // 258
+    const AH=60;          // adj-to-corner on short rail
+    const MH=IH-2*AH;     // middle short rail height: 336-120=216
+
+    // ── Felt (inner playing surface) ─────────────────────────────
+    dt(0,1, IX,IY, IW,IH);
+
+    // ── Top long rail (y=0, height=CH=38) ────────────────────────
+    let x=0;
+    dt(1,0, x,0, CW,CH); x+=CW; // top-left corner
+    dt(1,1, x,0, AW,CH); x+=AW; // TL adj
+    dt(1,2, x,0, RW,CH); x+=RW; // top rail left
+    dt(2,1, x,0,PAW,CH); x+=PAW;// pocket adj left
+    dt(2,2, x,0, PW,CH); x+=PW; // top side pocket
+    dt(2,3, x,0,PAW,CH); x+=PAW;// pocket adj right
+    dt(1,2, x,0, RW,CH); x+=RW; // top rail right
+    dt(1,3, x,0, AW,CH); x+=AW; // TR adj
+    dt(1,4, x,0, CW,CH);        // top-right corner
+
+    // ── Bottom long rail (y=TABLE_H-CH, height=CH=38) ────────────
+    x=0;
+    const by=TABLE_H-CH;
+    dt(4,0, x,by, CW,CH); x+=CW;
+    dt(4,1, x,by, AW,CH); x+=AW;
+    dt(4,2, x,by, RW,CH); x+=RW;
+    dt(3,1, x,by,PAW,CH); x+=PAW;
+    dt(3,2, x,by, PW,CH); x+=PW;
+    dt(3,3, x,by,PAW,CH); x+=PAW;
+    dt(4,2, x,by, RW,CH); x+=RW;
+    dt(4,3, x,by, AW,CH); x+=AW;
+    dt(4,4, x,by, CW,CH);
+
+    // ── Left short rail (x=0, width=RAIL_W=38) ───────────────────
+    let y=CH;
+    dt(2,0, 0,y, RAIL_W,AH); y+=AH; // TL adj side
+    dt(0,2, 0,y, RAIL_W,MH); y+=MH; // left rail middle
+    dt(3,0, 0,y, RAIL_W,AH);        // BL adj side
+
+    // ── Right short rail (x=TABLE_W-RAIL_W, width=RAIL_W=38) ─────
+    y=CH;
+    const rx=TABLE_W-RAIL_W;
+    dt(2,4, rx,y, RAIL_W,AH); y+=AH;
+    dt(0,3, rx,y, RAIL_W,MH); y+=MH;
+    dt(3,4, rx,y, RAIL_W,AH);
+
+    // ── Overlaid markings ─────────────────────────────────────────
+    // Head string
+    ctx.strokeStyle='rgba(255,255,255,.07)';ctx.lineWidth=1;ctx.setLineDash([4,7]);
+    ctx.beginPath();ctx.moveTo(HEAD_X,IY);ctx.lineTo(HEAD_X,IY+IH);ctx.stroke();ctx.setLineDash([]);
+    // Foot spot
+    ctx.fillStyle='rgba(255,255,255,.18)';
+    ctx.beginPath();ctx.arc(FOOT_X,MID_Y,3.5,0,Math.PI*2);ctx.fill();
     return;
   }
+  // ── Fallback: programmatic table ─────────────────────────────────
   const tw=TABLE_W,th=TABLE_H;
-  // Wood frame
   ctx.fillStyle='#5c3212';ctx.fillRect(0,0,tw,th);
-  // Rails
   const rg=ctx.createLinearGradient(0,0,RAIL_W,0);
   rg.addColorStop(0,'#7a4a1a');rg.addColorStop(.5,'#6a3a12');rg.addColorStop(1,'#5c3010');
   ctx.fillStyle=rg;
   ctx.fillRect(0,0,tw,RAIL_W);ctx.fillRect(0,th-RAIL_W,tw,RAIL_W);
   ctx.fillRect(0,0,RAIL_W,th);ctx.fillRect(tw-RAIL_W,0,RAIL_W,th);
-  // Inner edge
   ctx.strokeStyle='#b07030';ctx.lineWidth=1.5;ctx.strokeRect(RAIL_W+1,RAIL_W+1,IW-2,IH-2);
-  // Felt
   const fg=ctx.createRadialGradient(IX+IW/2,IY+IH/2,0,IX+IW/2,IY+IH/2,IW*.7);
   fg.addColorStop(0,'#207032');fg.addColorStop(.6,'#196828');fg.addColorStop(1,'#145820');
   ctx.fillStyle=fg;ctx.fillRect(IX,IY,IW,IH);
-  // Weave
   ctx.strokeStyle='rgba(255,255,255,.022)';ctx.lineWidth=1;
   for(let x=IX;x<IX+IW;x+=18){ctx.beginPath();ctx.moveTo(x,IY);ctx.lineTo(x,IY+IH);ctx.stroke();}
-  // Diamonds
   ctx.fillStyle='rgba(255,215,90,.55)';
   const dw=IW/8,dh=IH/4;
   for(let i=1;i<8;i++){
@@ -488,12 +550,9 @@ function drawTable(){
     ctx.beginPath();ctx.arc(IX-11,IY+i*dh,3.5,0,Math.PI*2);ctx.fill();
     ctx.beginPath();ctx.arc(IX+IW+11,IY+i*dh,3.5,0,Math.PI*2);ctx.fill();
   }
-  // Head string
   ctx.strokeStyle='rgba(255,255,255,.09)';ctx.lineWidth=1;ctx.setLineDash([4,7]);
   ctx.beginPath();ctx.moveTo(HEAD_X,IY);ctx.lineTo(HEAD_X,IY+IH);ctx.stroke();ctx.setLineDash([]);
-  // Foot spot
   ctx.fillStyle='rgba(255,255,255,.2)';ctx.beginPath();ctx.arc(FOOT_X,MID_Y,3.5,0,Math.PI*2);ctx.fill();
-  // Pockets
   for(const p of pockets()){
     ctx.beginPath();ctx.arc(p.x,p.y,PKT_R+4,0,Math.PI*2);ctx.fillStyle='rgba(0,0,0,.55)';ctx.fill();
     ctx.beginPath();ctx.arc(p.x,p.y,PKT_R+1,0,Math.PI*2);ctx.fillStyle='#080808';ctx.fill();
@@ -599,7 +658,7 @@ function drawAim(cb){
     ctx.save();
     ctx.translate((tipX+buttX)/2,(tipY+buttY)/2);
     ctx.rotate(Math.atan2(ny,nx));
-    ctx.drawImage(SPRITES['cue'],-95,-7,190,14);
+    ctx.drawImage(SPRITES['cue'],-95,-6,190,12);
     ctx.restore();
   } else {
     const px=-ny,py=nx; // perp
