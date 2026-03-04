@@ -467,10 +467,17 @@ function drawTable(){
     //   portrait bottom→ landscape left   (left end rail + corner pockets)
     // After this rotation, pocket/cushion positions align with the physics
     // at RAIL_W=38: side pockets at (TABLE_W/2, ~RAIL_W) and corners at (RAIL_W, RAIL_W) etc.
+    // The tileset is a 5×5 grid of 720×720 tiles (3600×3600 total).
+    // Row 0 (portrait y: 0–720) contains utility/texture tiles — skip it.
+    // Rows 1–4 (portrait y: 720–3600, height 2880) contain the full table view.
+    // We crop to those rows and rotate 90° CW: portrait-left → landscape-top, etc.
     ctx.save();
     ctx.translate(TABLE_W, 0);
     ctx.rotate(Math.PI / 2);
-    ctx.drawImage(SPRITES['table'], 0, 0, TABLE_H, TABLE_W);
+    ctx.drawImage(SPRITES['table'],
+      0, 720, 3600, 2880,   // source: rows 1–4 only (skip utility row 0)
+      0, 0, TABLE_H, TABLE_W  // dest: fill rotated canvas
+    );
     ctx.restore();
 
     // ── Overlaid markings ─────────────────────────────────────────
