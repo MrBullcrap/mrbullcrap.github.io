@@ -96,6 +96,8 @@ body{
       <div id="pbg"><div id="pbar"></div></div>
     </div>
     <span id="hint">Pull cue back to shoot</span>
+    <img id="chalk-icon" src="assets/pool_chalk.png" title="Chalk Cue" onclick="chalkCue()"
+      style="height:28px;cursor:pointer;opacity:.8;transition:transform .2s,opacity .2s;flex-shrink:0;">
     <button class="btn" onclick="newGame()">New Game</button>
     <button class="btn" onclick="showRules()">Rules</button>
   </div>
@@ -201,6 +203,24 @@ const BD = {
  14: {b:'#f0f0ec',s:'#186028',t:'14'},
  15: {b:'#f0f0ec',s:'#800808',t:'15'},
 };
+
+// ── Sprites ──────────────────────────────────────────────────────
+const SPRITES = {};
+function loadSprite(key, src){
+  const img = new Image();
+  img.src = src;
+  SPRITES[key] = img;
+}
+function initSprites(){
+  for(let i=0;i<=15;i++) loadSprite('ball_'+i,'assets/pool_ball_outline_'+i+'.png');
+  loadSprite('table','assets/pool_table_tileset.png');
+  loadSprite('cue',  'assets/pool_cue_outline.png');
+  loadSprite('chalk','assets/pool_chalk.png');
+}
+function sprOk(key){
+  const img=SPRITES[key];
+  return img&&img.complete&&img.naturalWidth>0;
+}
 
 // ── Canvas setup ─────────────────────────────────────────────────
 const canvas = document.getElementById('gc');
@@ -435,6 +455,10 @@ function respotBall(num){const b=balls.find(b=>b.num===num);if(!b)return;b.pocke
 
 // ── Drawing ───────────────────────────────────────────────────────
 function drawTable(){
+  if(sprOk('table')){
+    ctx.drawImage(SPRITES['table'],0,0,TABLE_W,TABLE_H);
+    return;
+  }
   const tw=TABLE_W,th=TABLE_H;
   // Wood frame
   ctx.fillStyle='#5c3212';ctx.fillRect(0,0,tw,th);
@@ -480,6 +504,14 @@ function drawTable(){
 function drawBall(b){
   if(b.pocketed) return;
   const {num,x,y,r}=b,d=BD[num];
+  const key='ball_'+num;
+  if(sprOk(key)){
+    ctx.save();ctx.translate(x,y);
+    ctx.beginPath();ctx.arc(1.5,2,r,0,Math.PI*2);ctx.fillStyle='rgba(0,0,0,.32)';ctx.fill();
+    ctx.drawImage(SPRITES[key],-r,-r,r*2,r*2);
+    ctx.restore();
+    return;
+  }
   ctx.save();ctx.translate(x,y);
   // Shadow
   ctx.beginPath();ctx.arc(1.5,2,r,0,Math.PI*2);ctx.fillStyle='rgba(0,0,0,.32)';ctx.fill();
@@ -562,26 +594,34 @@ function drawAim(cb){
   const pullVis=rawPow*55+8;
   const tipX=cb.x-nx*(cb.r+2+pullVis), tipY=cb.y-ny*(cb.r+2+pullVis);
   const buttX=tipX-nx*190,             buttY=tipY-ny*190;
-  const px=-ny,py=nx; // perp
 
-  ctx.save();
-  const cg=ctx.createLinearGradient(tipX,tipY,buttX,buttY);
-  cg.addColorStop(0,'#e8c870');cg.addColorStop(.07,'#c08028');
-  cg.addColorStop(.55,'#8a5015');cg.addColorStop(1,'#5a2e08');
-  ctx.beginPath();
-  ctx.moveTo(tipX+px*1.8,tipY+py*1.8);ctx.lineTo(tipX-px*1.8,tipY-py*1.8);
-  ctx.lineTo(buttX-px*6,buttY-py*6);ctx.lineTo(buttX+px*6,buttY+py*6);
-  ctx.closePath();ctx.fillStyle=cg;ctx.fill();
-  ctx.strokeStyle='rgba(0,0,0,.28)';ctx.lineWidth=.6;ctx.stroke();
-  // Wrap rings
-  for(let i=1;i<=3;i++){
-    const t=.62+i*.09;
-    const rx=tipX+(buttX-tipX)*t,ry=tipY+(buttY-tipY)*t;
-    const hw=2+i*1.4;
-    ctx.strokeStyle='rgba(180,130,55,.55)';ctx.lineWidth=1.4;
-    ctx.beginPath();ctx.moveTo(rx+px*hw,ry+py*hw);ctx.lineTo(rx-px*hw,ry-py*hw);ctx.stroke();
+  if(sprOk('cue')){
+    ctx.save();
+    ctx.translate((tipX+buttX)/2,(tipY+buttY)/2);
+    ctx.rotate(Math.atan2(ny,nx));
+    ctx.drawImage(SPRITES['cue'],-95,-7,190,14);
+    ctx.restore();
+  } else {
+    const px=-ny,py=nx; // perp
+    ctx.save();
+    const cg=ctx.createLinearGradient(tipX,tipY,buttX,buttY);
+    cg.addColorStop(0,'#e8c870');cg.addColorStop(.07,'#c08028');
+    cg.addColorStop(.55,'#8a5015');cg.addColorStop(1,'#5a2e08');
+    ctx.beginPath();
+    ctx.moveTo(tipX+px*1.8,tipY+py*1.8);ctx.lineTo(tipX-px*1.8,tipY-py*1.8);
+    ctx.lineTo(buttX-px*6,buttY-py*6);ctx.lineTo(buttX+px*6,buttY+py*6);
+    ctx.closePath();ctx.fillStyle=cg;ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,.28)';ctx.lineWidth=.6;ctx.stroke();
+    // Wrap rings
+    for(let i=1;i<=3;i++){
+      const t=.62+i*.09;
+      const rx=tipX+(buttX-tipX)*t,ry=tipY+(buttY-tipY)*t;
+      const hw=2+i*1.4;
+      ctx.strokeStyle='rgba(180,130,55,.55)';ctx.lineWidth=1.4;
+      ctx.beginPath();ctx.moveTo(rx+px*hw,ry+py*hw);ctx.lineTo(rx-px*hw,ry-py*hw);ctx.stroke();
+    }
+    ctx.restore();
   }
-  ctx.restore();
 
   document.getElementById('pbar').style.width=(rawPow*100).toFixed(0)+'%';
 }
@@ -724,8 +764,15 @@ function showGameOver(w,m){
 }
 function showRules(){document.getElementById('rules').style.display='block';}
 function hideRules(){document.getElementById('rules').style.display='none';}
+function chalkCue(){
+  const e=document.getElementById('chalk-icon');
+  e.style.transform='rotate(20deg) scale(1.15)';e.style.opacity='1';
+  setTimeout(()=>{e.style.transform='';e.style.opacity='.8';},350);
+  showInfo('Cue chalked!');
+}
 
 // Boot
+initSprites();
 resize();
 requestAnimationFrame(loop);
 </script>
