@@ -173,16 +173,14 @@ const HEAD_X = IX + IW*0.25;
 const FOOT_X = IX + IW*0.75;
 const MID_Y  = IY + IH*0.5;
 
-function pockets(){
-  return [
+const POCKETS = [
     {x:IX,      y:IY},
     {x:IX+IW/2, y:IY-1},
     {x:IX+IW,   y:IY},
     {x:IX,      y:IY+IH},
     {x:IX+IW/2, y:IY+IH+1},
     {x:IX+IW,   y:IY+IH},
-  ];
-}
+];
 
 // ── Ball look definitions ────────────────────────────────────────
 const BD = {
@@ -269,7 +267,8 @@ function newGame(){
   document.getElementById('pbar').style.width='0%';
   document.getElementById('overlay').style.display='none';
   setupBalls(); updateUI(); gs='aiming';
-  requestAnimationFrame(loop);
+  cancelAnimationFrame(rafId);
+  rafId=requestAnimationFrame(loop);
 }
 function startGame(){newGame();}
 
@@ -297,7 +296,7 @@ function setupBalls(){
 const SUBSTEPS = 4;
 
 function physStep(){
-  const pk=pockets();
+  const pk=POCKETS;
   const sf=1/SUBSTEPS; // fraction per substep
 
   for(let s=0;s<SUBSTEPS;s++){
@@ -459,56 +458,45 @@ function respotBall(num){const b=balls.find(b=>b.num===num);if(!b)return;b.pocke
 // ── Drawing ───────────────────────────────────────────────────────
 function drawTable(){
   if(sprOk('table')){
-    const T=720; // source tile size in tileset
-    // dt(row, col, destX, destY, destW, destH)
+    const T=720;   // tileset tile size
+    const AW=30;   // adj segment width (corner-adj and pocket-adj are same width)
+    const PW=36;   // pocket tile width (centers at TABLE_W/2)
+    const RW=TABLE_W/2-RAIL_W-AW-AW-PW/2; // straight rail segment: 258
+    const AH=60;   // adj segment height (short rail)
+    const MH=IH-2*AH; // middle short rail height: 216
+
     function dt(r,c,dx,dy,dw,dh){
       ctx.drawImage(SPRITES['table'],c*T,r*T,T,T,dx,dy,dw,dh);
     }
-    // ── Layout constants ──────────────────────────────────────────
-    const CW=RAIL_W, CH=RAIL_W; // corner tile: 38×38
-    const AW=30;   // adj-to-corner on long rail
-    const PAW=30;  // adj-to-pocket on long rail
-    const PW=36;   // pocket tile width (centers at TABLE_W/2 = 374)
-    const RW=TABLE_W/2-CW-AW-PAW-PW/2; // 258
-    const AH=60;
-    const MH=IH-2*AH;     // middle short rail height: 336-120=216
+    // r1=outer rail row, r2=pocket row, y=dest y
+    function drawLongRail(r1,r2,y){
+      let x=0;
+      dt(r1,0, x,y, RAIL_W,RAIL_W); x+=RAIL_W;
+      dt(r1,1, x,y, AW,RAIL_W);     x+=AW;
+      dt(r1,2, x,y, RW,RAIL_W);     x+=RW;
+      dt(r2,1, x,y, AW,RAIL_W);     x+=AW;
+      dt(r2,2, x,y, PW,RAIL_W);     x+=PW;
+      dt(r2,3, x,y, AW,RAIL_W);     x+=AW;
+      dt(r1,2, x,y, RW,RAIL_W);     x+=RW;
+      dt(r1,3, x,y, AW,RAIL_W);     x+=AW;
+      dt(r1,4, x,y, RAIL_W,RAIL_W);
+    }
 
     // ── Felt (inner playing surface) ─────────────────────────────
     dt(0,1, IX,IY, IW,IH);
 
-    // ── Top long rail (y=0, height=CH=38) ────────────────────────
-    let x=0;
-    dt(1,0, x,0, CW,CH); x+=CW;
-    dt(1,1, x,0, AW,CH); x+=AW;
-    dt(1,2, x,0, RW,CH); x+=RW;
-    dt(2,1, x,0,PAW,CH); x+=PAW;
-    dt(2,2, x,0, PW,CH); x+=PW;
-    dt(2,3, x,0,PAW,CH); x+=PAW;
-    dt(1,2, x,0, RW,CH); x+=RW;
-    dt(1,3, x,0, AW,CH); x+=AW;
-    dt(1,4, x,0, CW,CH);
+    // ── Long rails ───────────────────────────────────────────────
+    drawLongRail(1, 2, 0);
+    drawLongRail(4, 3, TABLE_H-RAIL_W);
 
-    // ── Bottom long rail (y=TABLE_H-CH, height=CH=38) ────────────
-    x=0;
-    const by=TABLE_H-CH;
-    dt(4,0, x,by, CW,CH); x+=CW;
-    dt(4,1, x,by, AW,CH); x+=AW;
-    dt(4,2, x,by, RW,CH); x+=RW;
-    dt(3,1, x,by,PAW,CH); x+=PAW;
-    dt(3,2, x,by, PW,CH); x+=PW;
-    dt(3,3, x,by,PAW,CH); x+=PAW;
-    dt(4,2, x,by, RW,CH); x+=RW;
-    dt(4,3, x,by, AW,CH); x+=AW;
-    dt(4,4, x,by, CW,CH);
-
-    // ── Left short rail (x=0, width=RAIL_W=38) ───────────────────
-    let y=CH;
+    // ── Left short rail (x=0, width=RAIL_W) ──────────────────────
+    let y=RAIL_W;
     dt(2,0, 0,y, RAIL_W,AH); y+=AH;
     dt(0,2, 0,y, RAIL_W,MH); y+=MH;
     dt(3,0, 0,y, RAIL_W,AH);
 
-    // ── Right short rail (x=TABLE_W-RAIL_W, width=RAIL_W=38) ─────
-    y=CH;
+    // ── Right short rail (x=TABLE_W-RAIL_W, width=RAIL_W) ────────
+    y=RAIL_W;
     const rx=TABLE_W-RAIL_W;
     dt(2,4, rx,y, RAIL_W,AH); y+=AH;
     dt(0,3, rx,y, RAIL_W,MH); y+=MH;
@@ -548,7 +536,7 @@ function drawTable(){
   ctx.strokeStyle='rgba(255,255,255,.09)';ctx.lineWidth=1;ctx.setLineDash([4,7]);
   ctx.beginPath();ctx.moveTo(HEAD_X,IY);ctx.lineTo(HEAD_X,IY+IH);ctx.stroke();ctx.setLineDash([]);
   ctx.fillStyle='rgba(255,255,255,.2)';ctx.beginPath();ctx.arc(FOOT_X,MID_Y,3.5,0,Math.PI*2);ctx.fill();
-  for(const p of pockets()){
+  for(const p of POCKETS){
     ctx.beginPath();ctx.arc(p.x,p.y,PKT_R+4,0,Math.PI*2);ctx.fillStyle='rgba(0,0,0,.55)';ctx.fill();
     ctx.beginPath();ctx.arc(p.x,p.y,PKT_R+1,0,Math.PI*2);ctx.fillStyle='#080808';ctx.fill();
     ctx.beginPath();ctx.arc(p.x,p.y,PKT_R+1,0,Math.PI*2);ctx.strokeStyle='#3a2808';ctx.lineWidth=1.5;ctx.stroke();
@@ -690,7 +678,7 @@ function drawBIH(cb){
 }
 
 // ── Main loop ─────────────────────────────────────────────────────
-let stlF=0;
+let stlF=0, rafId=0;
 function loop(){
   resize();
   ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -708,7 +696,7 @@ function loop(){
     if(spd<0.3){stlF++;if(stlF>10){stlF=0;onShotEnd();}}
     else stlF=0;
   }
-  requestAnimationFrame(loop);
+  rafId=requestAnimationFrame(loop);
 }
 
 // ── Input ─────────────────────────────────────────────────────────
