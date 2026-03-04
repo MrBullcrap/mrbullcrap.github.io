@@ -226,14 +226,17 @@ function sprOk(key){
 const canvas = document.getElementById('gc');
 const ctx    = canvas.getContext('2d');
 let   scl    = 1;
+let   dpr    = 1;
 
 function resize(){
   const wrap=document.getElementById('cwrap');
+  dpr = window.devicePixelRatio || 1;
   const sx=wrap.clientWidth/TABLE_W, sy=wrap.clientHeight/TABLE_H;
   scl=Math.min(sx,sy)*0.99;
   const pw=Math.round(TABLE_W*scl), ph=Math.round(TABLE_H*scl);
-  if(canvas.width!==pw||canvas.height!==ph){
-    canvas.width=pw; canvas.height=ph;
+  const cw=Math.round(pw*dpr), ch=Math.round(ph*dpr);
+  if(canvas.width!==cw||canvas.height!==ch){
+    canvas.width=cw; canvas.height=ch;
     canvas.style.width=pw+'px'; canvas.style.height=ph+'px';
   }
 }
@@ -456,66 +459,19 @@ function respotBall(num){const b=balls.find(b=>b.num===num);if(!b)return;b.pocke
 // ── Drawing ───────────────────────────────────────────────────────
 function drawTable(){
   if(sprOk('table')){
-    const T=720; // source tile size in tileset
-    // dt(row, col, destX, destY, destW, destH)
-    function dt(r,c,dx,dy,dw,dh){
-      ctx.drawImage(SPRITES['table'],c*T,r*T,T,T,dx,dy,dw,dh);
-    }
-    // ── Layout constants ──────────────────────────────────────────
-    // Top/bottom long rail assembly (left→right):
-    //   [corner CW] [adj AW] [rail RW] [pkt-adj PAW] [pocket PW] [pkt-adj PAW] [rail RW] [adj AW] [corner CW]
-    // Left/right short rail assembly (top→bottom):
-    //   [adj-side AH] [middle rail MH] [adj-side AH]  (corners are part of long rail rows)
-    const CW=RAIL_W, CH=RAIL_W; // corner tile: 38×38
-    const AW=30;   // adj-to-corner on long rail
-    const PAW=30;  // adj-to-pocket on long rail
-    const PW=36;   // pocket tile width (centers at TABLE_W/2 = 374)
-    // RW: straight rail segment each side — computed to fill exactly TABLE_W
-    // CW+AW+RW+PAW+PW/2 = TABLE_W/2  →  RW = 374-38-30-30-18 = 258
-    const RW=TABLE_W/2-CW-AW-PAW-PW/2; // 258
-    const AH=60;          // adj-to-corner on short rail
-    const MH=IH-2*AH;     // middle short rail height: 336-120=216
-
-    // ── Felt (inner playing surface) ─────────────────────────────
-    dt(0,1, IX,IY, IW,IH);
-
-    // ── Top long rail (y=0, height=CH=38) ────────────────────────
-    let x=0;
-    dt(1,0, x,0, CW,CH); x+=CW; // top-left corner
-    dt(1,1, x,0, AW,CH); x+=AW; // TL adj
-    dt(1,2, x,0, RW,CH); x+=RW; // top rail left
-    dt(2,1, x,0,PAW,CH); x+=PAW;// pocket adj left
-    dt(2,2, x,0, PW,CH); x+=PW; // top side pocket
-    dt(2,3, x,0,PAW,CH); x+=PAW;// pocket adj right
-    dt(1,2, x,0, RW,CH); x+=RW; // top rail right
-    dt(1,3, x,0, AW,CH); x+=AW; // TR adj
-    dt(1,4, x,0, CW,CH);        // top-right corner
-
-    // ── Bottom long rail (y=TABLE_H-CH, height=CH=38) ────────────
-    x=0;
-    const by=TABLE_H-CH;
-    dt(4,0, x,by, CW,CH); x+=CW;
-    dt(4,1, x,by, AW,CH); x+=AW;
-    dt(4,2, x,by, RW,CH); x+=RW;
-    dt(3,1, x,by,PAW,CH); x+=PAW;
-    dt(3,2, x,by, PW,CH); x+=PW;
-    dt(3,3, x,by,PAW,CH); x+=PAW;
-    dt(4,2, x,by, RW,CH); x+=RW;
-    dt(4,3, x,by, AW,CH); x+=AW;
-    dt(4,4, x,by, CW,CH);
-
-    // ── Left short rail (x=0, width=RAIL_W=38) ───────────────────
-    let y=CH;
-    dt(2,0, 0,y, RAIL_W,AH); y+=AH; // TL adj side
-    dt(0,2, 0,y, RAIL_W,MH); y+=MH; // left rail middle
-    dt(3,0, 0,y, RAIL_W,AH);        // BL adj side
-
-    // ── Right short rail (x=TABLE_W-RAIL_W, width=RAIL_W=38) ─────
-    y=CH;
-    const rx=TABLE_W-RAIL_W;
-    dt(2,4, rx,y, RAIL_W,AH); y+=AH;
-    dt(0,3, rx,y, RAIL_W,MH); y+=MH;
-    dt(3,4, rx,y, RAIL_W,AH);
+    // The tileset is portrait-oriented (long axis vertical).
+    // Rotate 90° CW so it maps correctly to our landscape table:
+    //   portrait left  → landscape top    (top long rail + side pocket)
+    //   portrait right → landscape bottom (bottom long rail + side pocket)
+    //   portrait top   → landscape right  (right end rail + corner pockets)
+    //   portrait bottom→ landscape left   (left end rail + corner pockets)
+    // After this rotation, pocket/cushion positions align with the physics
+    // at RAIL_W=38: side pockets at (TABLE_W/2, ~RAIL_W) and corners at (RAIL_W, RAIL_W) etc.
+    ctx.save();
+    ctx.translate(TABLE_W, 0);
+    ctx.rotate(Math.PI / 2);
+    ctx.drawImage(SPRITES['table'], 0, 0, TABLE_H, TABLE_W);
+    ctx.restore();
 
     // ── Overlaid markings ─────────────────────────────────────────
     // Head string
@@ -699,7 +655,7 @@ let stlF=0;
 function loop(){
   resize();
   ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.save();ctx.scale(scl,scl);
+  ctx.save();ctx.scale(scl*dpr,scl*dpr);
   drawTable();
   for(const b of balls) drawBall(b);
   const cb=balls[0];
