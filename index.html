@@ -174,13 +174,18 @@ const FOOT_X = IX + IW*0.75;
 const MID_Y  = IY + IH*0.5;
 
 const POCKETS = [
-    {x:IX,      y:IY},
-    {x:IX+IW/2, y:IY-1},
-    {x:IX+IW,   y:IY},
-    {x:IX,      y:IY+IH},
-    {x:IX+IW/2, y:IY+IH+1},
-    {x:IX+IW,   y:IY+IH},
+    {x:IX,      y:IY},        // 0 top-left
+    {x:IX+IW/2, y:IY},        // 1 top-center
+    {x:IX+IW,   y:IY},        // 2 top-right
+    {x:IX,      y:IY+IH},     // 3 bottom-left
+    {x:IX+IW/2, y:IY+IH},     // 4 bottom-center
+    {x:IX+IW,   y:IY+IH},     // 5 bottom-right
 ];
+// Per-rail pocket groups used to open gaps in the cushion collision
+const PKT_TOP    = [POCKETS[0],POCKETS[1],POCKETS[2]];
+const PKT_BOT    = [POCKETS[3],POCKETS[4],POCKETS[5]];
+const PKT_LEFT   = [POCKETS[0],POCKETS[3]];
+const PKT_RIGHT  = [POCKETS[2],POCKETS[5]];
 
 // ── Ball look definitions ────────────────────────────────────────
 const BD = {
@@ -321,18 +326,8 @@ function physStep(){
       }
     }
 
-    // Cushions
-    for(const b of balls){
-      if(b.pocketed) continue;
-      let hit=false;
-      if(b.x-b.r<IX){b.x=IX+b.r;b.vx=Math.abs(b.vx)*RAIL_E;hit=true;}
-      if(b.x+b.r>IX+IW){b.x=IX+IW-b.r;b.vx=-Math.abs(b.vx)*RAIL_E;hit=true;}
-      if(b.y-b.r<IY){b.y=IY+b.r;b.vy=Math.abs(b.vy)*RAIL_E;hit=true;}
-      if(b.y+b.r>IY+IH){b.y=IY+IH-b.r;b.vy=-Math.abs(b.vy)*RAIL_E;hit=true;}
-      if(hit&&gs==='rolling') railTouched=true;
-    }
-
-    // Pockets
+    // Pockets — checked BEFORE cushions so balls entering pocket zones
+    // are captured rather than bounced back by the rectangular rail boundary
     for(const b of balls){
       if(b.pocketed) continue;
       for(const p of pk){
@@ -343,6 +338,20 @@ function physStep(){
           break;
         }
       }
+    }
+
+    // Cushions — gaps are opened around pocket openings so balls near
+    // a pocket are not deflected by the rectangular boundary wall
+    const GR2=(PKT_R*1.8)**2; // pocket-gap radius² (larger than PKT_R so jaws feel natural)
+    const near=(b,list)=>list.some(p=>{const dx=b.x-p.x,dy=b.y-p.y;return dx*dx+dy*dy<GR2;});
+    for(const b of balls){
+      if(b.pocketed) continue;
+      let hit=false;
+      if(b.x-b.r<IX     &&!near(b,PKT_LEFT)) {b.x=IX+b.r;    b.vx= Math.abs(b.vx)*RAIL_E;hit=true;}
+      if(b.x+b.r>IX+IW  &&!near(b,PKT_RIGHT)){b.x=IX+IW-b.r; b.vx=-Math.abs(b.vx)*RAIL_E;hit=true;}
+      if(b.y-b.r<IY     &&!near(b,PKT_TOP))  {b.y=IY+b.r;    b.vy= Math.abs(b.vy)*RAIL_E;hit=true;}
+      if(b.y+b.r>IY+IH  &&!near(b,PKT_BOT))  {b.y=IY+IH-b.r; b.vy=-Math.abs(b.vy)*RAIL_E;hit=true;}
+      if(hit&&gs==='rolling') railTouched=true;
     }
   }
 }
@@ -612,7 +621,8 @@ function drawAim(cb){
   const endY=gy!==null?gy:cb.y+ny*IH*2;
   ctx.save();
   ctx.strokeStyle='rgba(255,255,255,.14)';ctx.lineWidth=1;ctx.setLineDash([5,8]);
-  ctx.beginPath();ctx.moveTo(cb.x,cb.y);ctx.lineTo(endX,endY);ctx.stroke();ctx.setLineDash([]);
+  // Start line from ball surface so it visually connects to the ghost ball ring
+  ctx.beginPath();ctx.moveTo(cb.x+nx*cb.r,cb.y+ny*cb.r);ctx.lineTo(endX,endY);ctx.stroke();ctx.setLineDash([]);
 
   // Ghost ball ring + target deflection
   if(gx!==null){
@@ -640,7 +650,7 @@ function drawAim(cb){
   if(sprOk('cue')){
     ctx.save();
     ctx.translate((tipX+buttX)/2,(tipY+buttY)/2);
-    ctx.rotate(Math.atan2(ny,nx));
+    ctx.rotate(Math.atan2(ny,nx)+Math.PI);
     ctx.drawImage(SPRITES['cue'],-95,-6,190,12);
     ctx.restore();
   } else {
