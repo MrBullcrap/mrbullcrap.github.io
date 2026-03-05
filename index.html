@@ -231,12 +231,12 @@ function resize(){
   const aw=sw-mg*2, ah=sh-mg*2;
   // Fit full 9×5 tile canvas into available space
   const cW = aw/CANVAS_AR<=ah ? aw : ah*CANVAS_AR;
-  const ts  = cW/9;          // screen tile size (square)
+  const ts  = Math.round(cW/9);  // integer tile size → pixel-perfect tile seams
   railPx=ts;
   // Physics bounds derived from pixel analysis of rail tiles:
   // left cushion face at 2/3 of tile, right at 8+1/3, top at 25/36, bottom at 4+11/36
-  tX=ts*2/3;  tY=ts*25/36;
-  tW=ts*23/3; tH=ts*65/18;
+  tX=Math.round(ts*2/3);  tY=Math.round(ts*25/36);
+  tW=9*ts-2*tX;           tH=5*ts-2*tY;  // symmetric from rounded edges
   W=9*ts; H=5*ts;
   ballR=tW*BALL_R_FRAC;
   headX=tX+tW*0.25;
@@ -539,6 +539,8 @@ function startGame(){
 ════════════════════════════════════════════════════ */
 function draw(){
   ctx.clearRect(0,0,W,H);
+  ctx.imageSmoothingEnabled=true;
+  ctx.imageSmoothingQuality='high';
   ctx.fillStyle='#0f0a04';
   ctx.fillRect(0,0,W,H);
   drawTable();
@@ -623,8 +625,12 @@ function rRect(x,y,w,h,r){
 /* Balls */
 function drawBall(b){
   ctx.save(); ctx.translate(b.x,b.y);
-  ctx.beginPath(); ctx.arc(3,4,b.r,0,Math.PI*2);
-  ctx.fillStyle='rgba(0,0,0,.3)'; ctx.fill();
+  // Top-down contact shadow: centered radial, stays within b.r (no bleed into neighbors)
+  const sg=ctx.createRadialGradient(0,0,b.r*0.6,0,0,b.r);
+  sg.addColorStop(0,'rgba(0,0,0,0)');
+  sg.addColorStop(1,'rgba(0,0,0,0.35)');
+  ctx.beginPath(); ctx.arc(0,0,b.r,0,Math.PI*2);
+  ctx.fillStyle=sg; ctx.fill();
   const sp=sprBalls[b.num];
   if(sp&&sp.complete&&sp.naturalWidth>0){
     ctx.rotate(b.ang);
