@@ -247,19 +247,14 @@ function resize(){
 }
 
 function buildPockets(){
-  // Corner pockets: sprite visuals are in the rail tiles (outside playfield),
-  // so game positions are inset to the playfield boundary edge.
-  const ci=pocketR*0.50;
-  // Center pockets: sprite measured centers at col=2, rows 2-3.
-  // In screen coords (ts=railPx): x=2.5*ts, y=1.527*ts and y=2.471*ts.
-  const ts=railPx;
+  const ci=pocketR*0.50, si=pocketR*0.05;
   pockets=[
-    {x:tX+ci,         y:tY+ci        },  // TL corner
-    {x:tX+tW-ci,      y:tY+ci        },  // TR corner
-    {x:2.4993*ts,     y:1.5272*ts    },  // center-upper  (col2,row2)
-    {x:2.4993*ts,     y:2.4714*ts    },  // center-lower  (col2,row3)
-    {x:tX+ci,         y:tY+tH-ci     },  // BL corner
-    {x:tX+tW-ci,      y:tY+tH-ci     },  // BR corner
+    {x:tX+ci,       y:tY+ci      },  // TL corner
+    {x:tX+tW-ci,    y:tY+ci      },  // TR corner
+    {x:tX+tW*0.5,   y:tY-si      },  // top-center rail pocket
+    {x:tX+tW*0.5,   y:tY+tH+si   },  // bottom-center rail pocket
+    {x:tX+ci,       y:tY+tH-ci   },  // BL corner
+    {x:tX+tW-ci,    y:tY+tH-ci   },  // BR corner
   ];
 }
 
@@ -548,14 +543,14 @@ function drawTable(){
     // Screen tile size = railPx (square). Canvas = 5×4 tiles.
     const sw=sprTile.width/5, sh=sprTile.height/5, ts=railPx;
     const td=(sc,sr,dx,dy)=>ctx.drawImage(sprTile,sc*sw,sr*sh,sw,sh,dx,dy,ts,ts);
-    // Row 1 — top rail + corners
-    td(0,1, 0,    0   ); td(1,1, ts,   0   ); td(2,1, 2*ts, 0   ); td(3,1, 3*ts, 0   ); td(4,1, 4*ts, 0   );
-    // Row 2 — left/right rails + upper felt + center-upper pocket
-    td(0,2, 0,    ts  ); td(1,2, ts,   ts  ); td(2,2, 2*ts, ts  ); td(3,2, 3*ts, ts  ); td(4,2, 4*ts, ts  );
-    // Row 3 — left/right rails + lower felt + center-lower pocket
-    td(0,3, 0,    2*ts); td(1,3, ts,   2*ts); td(2,3, 2*ts, 2*ts); td(3,3, 3*ts, 2*ts); td(4,3, 4*ts, 2*ts);
-    // Row 4 — bottom rail + corners
-    td(0,4, 0,    3*ts); td(1,4, ts,   3*ts); td(2,4, 2*ts, 3*ts); td(3,4, 3*ts, 3*ts); td(4,4, 4*ts, 3*ts);
+    // Row 1 — top rail + corners; col 2 uses pocket tile (2,2) for the mid-rail pocket
+    td(0,1, 0,    0   ); td(1,1, ts,   0   ); td(2,2, 2*ts, 0   ); td(3,1, 3*ts, 0   ); td(4,1, 4*ts, 0   );
+    // Row 2 — left/right rails + upper felt; col 2 now plain felt (1,2) — pocket moved to rail
+    td(0,2, 0,    ts  ); td(1,2, ts,   ts  ); td(1,2, 2*ts, ts  ); td(3,2, 3*ts, ts  ); td(4,2, 4*ts, ts  );
+    // Row 3 — left/right rails + lower felt; col 2 now plain felt (1,3) — pocket moved to rail
+    td(0,3, 0,    2*ts); td(1,3, ts,   2*ts); td(1,3, 2*ts, 2*ts); td(3,3, 3*ts, 2*ts); td(4,3, 4*ts, 2*ts);
+    // Row 4 — bottom rail + corners; col 2 uses pocket tile (2,3) for the mid-rail pocket
+    td(0,4, 0,    3*ts); td(1,4, ts,   3*ts); td(2,3, 2*ts, 3*ts); td(3,4, 3*ts, 3*ts); td(4,4, 4*ts, 3*ts);
   }else{
     // Fallback
     ctx.fillStyle='#4e2508';
