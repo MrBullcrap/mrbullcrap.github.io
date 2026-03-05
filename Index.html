@@ -154,8 +154,7 @@ const BALL_REST    = 0.95;
 const MIN_SPEED    = 0.12;
 const BALL_R_FRAC  = 1/38;
 const PKT_R_FRAC   = 1/19;
-const RAIL_FRAC    = 0.072;
-const TABLE_AR     = 2.0;       // width:height
+const CANVAS_AR    = 5/4;       // full canvas width:height (5 tiles × 4 tiles)
 const HUD_H        = 44;
 const MAX_POWER    = 24;
 
@@ -215,8 +214,8 @@ function loadAssets(){
 
     sprTile=new Image(); sprTile.crossOrigin='anonymous';
     sprTile.onload=()=>{
-      tileW=Math.floor(sprTile.width/3);
-      tileH=Math.floor(sprTile.height/3);
+      tileW=Math.floor(sprTile.width/5);
+      tileH=Math.floor(sprTile.height/5);
       tick();
     };
     sprTile.onerror=tick;
@@ -230,11 +229,12 @@ function loadAssets(){
 function resize(){
   const sw=window.innerWidth, sh=window.innerHeight-HUD_H, mg=10;
   const aw=sw-mg*2, ah=sh-mg*2;
-  if(aw/TABLE_AR<=ah){ tW=aw; tH=aw/TABLE_AR; }
-  else               { tH=ah; tW=ah*TABLE_AR; }
-  railPx=tW*RAIL_FRAC;
-  W=tW+railPx*2; H=tH+railPx*2;
-  tX=railPx; tY=railPx;
+  // Fit full 5×4 tile canvas into available space
+  const cW = aw/CANVAS_AR<=ah ? aw : ah*CANVAS_AR;
+  const ts  = cW/5;          // screen tile size (square)
+  railPx=ts; tW=3*ts; tH=2*ts;
+  W=5*ts; H=4*ts;
+  tX=ts; tY=ts;
   ballR=tW*BALL_R_FRAC; pocketR=tW*PKT_R_FRAC;
   headX=tX+tW*0.25;
   canvas.width=W; canvas.height=H;
@@ -249,12 +249,12 @@ function resize(){
 function buildPockets(){
   const ci=pocketR*0.50, si=pocketR*0.05;
   pockets=[
-    {x:tX+ci,       y:tY+ci      },
-    {x:tX+tW*.5,    y:tY-si      },
-    {x:tX+tW-ci,    y:tY+ci      },
-    {x:tX+ci,       y:tY+tH-ci   },
-    {x:tX+tW*.5,    y:tY+tH+si   },
-    {x:tX+tW-ci,    y:tY+tH-ci   },
+    {x:tX+ci,       y:tY+ci      },  // TL corner
+    {x:tX+tW-ci,    y:tY+ci      },  // TR corner
+    {x:tX+tW*0.5,   y:tY-si      },  // top-center rail pocket
+    {x:tX+tW*0.5,   y:tY+tH+si   },  // bottom-center rail pocket
+    {x:tX+ci,       y:tY+tH-ci   },  // BL corner
+    {x:tX+tW-ci,    y:tY+tH-ci   },  // BR corner
   ];
 }
 
@@ -529,7 +529,7 @@ function draw(){
   ctx.clearRect(0,0,W,H);
   ctx.fillStyle='#0f0a04';
   ctx.fillRect(0,0,W,H);
-  drawTable(); drawPockets();
+  drawTable();
   for(const b of balls) if(b.active) drawBall(b);
   drawCue();
   if(bih) drawBIH();
@@ -538,17 +538,19 @@ function draw(){
 /* Table */
 function drawTable(){
   if(sprTile&&tileW>0&&sprTile.complete&&sprTile.naturalWidth>0){
-    const r=railPx;
-    const td=(c,ro,dx,dy,dw,dh)=>ctx.drawImage(sprTile,c*tileW,ro*tileH,tileW,tileH,dx,dy,dw,dh);
-    td(0,0,tX-r,   tY-r,  r,  r);
-    td(1,0,tX,     tY-r,  tW, r);
-    td(2,0,tX+tW,  tY-r,  r,  r);
-    td(0,1,tX-r,   tY,    r,  tH);
-    td(1,1,tX,     tY,    tW, tH);
-    td(2,1,tX+tW,  tY,    r,  tH);
-    td(0,2,tX-r,   tY+tH, r,  r);
-    td(1,2,tX,     tY+tH, tW, r);
-    td(2,2,tX+tW,  tY+tH, r,  r);
+    // Sprite: 5×5 grid, each tile = sprTile.width/5 × sprTile.height/5.
+    // Row 0 is utility (excluded). Table assembled from rows 1–4, cols 0–4.
+    // Screen tile size = railPx (square). Canvas = 5×4 tiles.
+    const sw=sprTile.width/5, sh=sprTile.height/5, ts=railPx;
+    const td=(sc,sr,dx,dy)=>ctx.drawImage(sprTile,sc*sw,sr*sh,sw,sh,dx,dy,ts,ts);
+    // Row 1 — top rail + corners; col 2 uses pocket tile (2,2) for the mid-rail pocket
+    td(0,1, 0,    0   ); td(1,1, ts,   0   ); td(2,2, 2*ts, 0   ); td(3,1, 3*ts, 0   ); td(4,1, 4*ts, 0   );
+    // Row 2 — left/right rails + upper felt; col 2 now plain felt (1,2) — pocket moved to rail
+    td(0,2, 0,    ts  ); td(1,2, ts,   ts  ); td(1,2, 2*ts, ts  ); td(3,2, 3*ts, ts  ); td(4,2, 4*ts, ts  );
+    // Row 3 — left/right rails + lower felt; col 2 now plain felt (1,3) — pocket moved to rail
+    td(0,3, 0,    2*ts); td(1,3, ts,   2*ts); td(1,3, 2*ts, 2*ts); td(3,3, 3*ts, 2*ts); td(4,3, 4*ts, 2*ts);
+    // Row 4 — bottom rail + corners; col 2 uses pocket tile (2,3) for the mid-rail pocket
+    td(0,4, 0,    3*ts); td(1,4, ts,   3*ts); td(2,3, 2*ts, 3*ts); td(3,4, 3*ts, 3*ts); td(4,4, 4*ts, 3*ts);
   }else{
     // Fallback
     ctx.fillStyle='#4e2508';
@@ -589,19 +591,6 @@ function rRect(x,y,w,h,r){
   ctx.closePath();
 }
 
-/* Pockets */
-function drawPockets(){
-  for(const p of pockets){
-    ctx.beginPath(); ctx.arc(p.x,p.y,pocketR*1.08,0,Math.PI*2);
-    ctx.fillStyle='#3a1a04'; ctx.fill();
-    const g=ctx.createRadialGradient(p.x-pocketR*.2,p.y-pocketR*.2,0,p.x,p.y,pocketR);
-    g.addColorStop(0,'#1a1a1a'); g.addColorStop(1,'#000');
-    ctx.beginPath(); ctx.arc(p.x,p.y,pocketR,0,Math.PI*2);
-    ctx.fillStyle=g; ctx.fill();
-    ctx.beginPath(); ctx.arc(p.x,p.y,pocketR,0,Math.PI*2);
-    ctx.strokeStyle='rgba(120,70,20,.55)'; ctx.lineWidth=2; ctx.stroke();
-  }
-}
 
 /* Balls */
 function drawBall(b){
