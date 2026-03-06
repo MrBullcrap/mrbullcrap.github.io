@@ -314,8 +314,12 @@ function calibrateTable(img){
   const data=ox.getImageData(0,0,sw,sh).data;
 
   const blackPx=[];
-  const greenPx=[];
-  const greenBrights=[];
+  // Per-column and per-row counts of rail-bright pixels.
+  // Rail green: green-dominant AND brightness in [90,100].
+  // The table sprite has a clear bimodal gap: felt peaks at 60-74, rail at 95-99,
+  // and a center spotlight at 100+ — capping at 100 excludes the spotlight.
+  const colRail=new Int32Array(sw);
+  const rowRail=new Int32Array(sh);
 
   for(let y=0;y<sh;y++){
     for(let x=0;x<sw;x++){
@@ -324,28 +328,27 @@ function calibrateTable(img){
       const bright=(r+g+b)/3;
       if(r<30&&g<30&&b<30){
         blackPx.push({x,y});
-      } else if(g>r*1.15&&g>b*1.15&&bright>10){
-        greenPx.push({x,y,bright});
-        greenBrights.push(bright);
+      } else if(g>r*1.15&&g>b*1.15&&bright>=90&&bright<=100){
+        colRail[x]++;
+        rowRail[y]++;
       }
     }
   }
 
-  // Median brightness separates dark green (felt) from light green (rail)
-  const sortedB=[...greenBrights].sort((a,b)=>a-b);
-  const medBright=sortedB[Math.floor(sortedB.length/2)]||100;
+  // "Enter-then-exit" scan: find where the solid rail band ends on each side.
+  // Scan from the outside inward; wait for rail density to exceed HIGH (we're
+  // inside the rail), then stop when it drops below LOW (inner edge reached).
+  const HIGH=0.3, LOW=0.05;
+  const cFrac=x=>colRail[x]/sh, rFrac=y=>rowRail[y]/sw;
 
-  // Wall positions from the INNER EDGE of the light-green rail pixels.
-  // Each side is isolated by quadrant so opposite rails don't interfere.
-  // origLeft/Right/Top/Bottom are in original (unflipped) image coordinates.
-  let origLeft=0, origRight=sw, origTop=0, origBottom=sh;
-  for(const {x,y,bright} of greenPx){
-    if(bright<=medBright) continue;               // skip felt, only rail pixels
-    if(x<sw*0.4 && x>origLeft)   origLeft=x;     // left rail:   rightmost pixel in left 40%
-    if(x>sw*0.6 && x<origRight)  origRight=x;    // right rail:  leftmost pixel in right 40%
-    if(y<sh*0.4 && y>origTop)    origTop=y;      // top rail:    bottommost pixel in top 40%
-    if(y>sh*0.6 && y<origBottom) origBottom=y;   // bottom rail: topmost pixel in bottom 40%
-  }
+  let origLeft=0;
+  {let in_=false; for(let x=0;x<sw>>1;x++){if(!in_&&cFrac(x)>HIGH)in_=true; if(in_&&cFrac(x)<LOW){origLeft=x-1;break;}}}
+  let origRight=sw;
+  {let in_=false; for(let x=sw-1;x>sw>>1;x--){if(!in_&&cFrac(x)>HIGH)in_=true; if(in_&&cFrac(x)<LOW){origRight=x+1;break;}}}
+  let origTop=0;
+  {let in_=false; for(let y=0;y<sh>>1;y++){if(!in_&&rFrac(y)>HIGH)in_=true; if(in_&&rFrac(y)<LOW){origTop=y-1;break;}}}
+  let origBottom=sh;
+  {let in_=false; for(let y=sh-1;y>sh>>1;y--){if(!in_&&rFrac(y)>HIGH)in_=true; if(in_&&rFrac(y)<LOW){origBottom=y+1;break;}}}
 
   // K-means pocket detection seeded at the expected pocket locations
   const fw=origRight-origLeft, fh=origBottom-origTop;
