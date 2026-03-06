@@ -331,27 +331,31 @@ function calibrateTable(img){
     }
   }
 
-  // Median-split green pixels → below median = dark (felt), above = light (rail)
-  const sorted=[...greenBrights].sort((a,b)=>a-b);
-  const medBright=sorted[Math.floor(sorted.length/2)]||100;
+  // Median brightness separates dark green (felt) from light green (rail)
+  const sortedB=[...greenBrights].sort((a,b)=>a-b);
+  const medBright=sortedB[Math.floor(sortedB.length/2)]||100;
 
-  let fMinX=sw,fMaxX=0,fMinY=sh,fMaxY=0;
+  // Wall positions from the INNER EDGE of the light-green rail pixels.
+  // Each side is isolated by quadrant so opposite rails don't interfere.
+  // origLeft/Right/Top/Bottom are in original (unflipped) image coordinates.
+  let origLeft=0, origRight=sw, origTop=0, origBottom=sh;
   for(const {x,y,bright} of greenPx){
-    if(bright<=medBright){
-      if(x<fMinX)fMinX=x; if(x>fMaxX)fMaxX=x;
-      if(y<fMinY)fMinY=y; if(y>fMaxY)fMaxY=y;
-    }
+    if(bright<=medBright) continue;               // skip felt, only rail pixels
+    if(x<sw*0.4 && x>origLeft)   origLeft=x;     // left rail:   rightmost pixel in left 40%
+    if(x>sw*0.6 && x<origRight)  origRight=x;    // right rail:  leftmost pixel in right 40%
+    if(y<sh*0.4 && y>origTop)    origTop=y;      // top rail:    bottommost pixel in top 40%
+    if(y>sh*0.6 && y<origBottom) origBottom=y;   // bottom rail: topmost pixel in bottom 40%
   }
 
-  // K-means with 6 seeds at expected pocket positions relative to felt bounds
-  const fw=fMaxX-fMinX, fh=fMaxY-fMinY;
+  // K-means pocket detection seeded at the expected pocket locations
+  const fw=origRight-origLeft, fh=origBottom-origTop;
   let seeds=[
-    {x:fMinX,        y:fMinY},
-    {x:fMinX+fw,     y:fMinY},
-    {x:fMinX+fw/2,   y:fMinY},
-    {x:fMinX,        y:fMinY+fh},
-    {x:fMinX+fw,     y:fMinY+fh},
-    {x:fMinX+fw/2,   y:fMinY+fh},
+    {x:origLeft,      y:origTop},
+    {x:origRight,     y:origTop},
+    {x:origLeft+fw/2, y:origTop},
+    {x:origLeft,      y:origBottom},
+    {x:origRight,     y:origBottom},
+    {x:origLeft+fw/2, y:origBottom},
   ];
   for(let iter=0;iter<6;iter++){
     const sums=seeds.map(()=>({x:0,y:0,n:0}));
@@ -366,7 +370,7 @@ function calibrateTable(img){
     seeds=sums.map((s,k)=>s.n>0?{x:s.x/s.n,y:s.y/s.n}:seeds[k]);
   }
 
-  // Pocket radius from average cluster pixel count
+  // Pocket radius from average cluster area
   const counts=new Array(6).fill(0);
   for(const {x,y} of blackPx){
     let best=0,bestD=Infinity;
@@ -379,10 +383,16 @@ function calibrateTable(img){
   const avgCount=counts.reduce((a,b)=>a+b,0)/6;
   const pRScaled=Math.sqrt(avgCount/Math.PI);
 
+  // Mirror x-coordinates to match the horizontal flip applied in drawTable().
+  // A pixel at original x appears at screen x = W*(1 - x/sw) after the flip.
+  // So: visual left wall  = 1 - origRight/sw
+  //     visual right wall = 1 - origLeft/sw   (width is preserved)
   return{
-    feltNX:fMinX/sw, feltNY:fMinY/sh,
-    feltNW:fw/sw,     feltNH:fh/sh,
-    pockets:seeds.map(s=>({nx:s.x/sw,ny:s.y/sh})),
+    feltNX:(sw-origRight)/sw,
+    feltNY:origTop/sh,
+    feltNW:(origRight-origLeft)/sw,
+    feltNH:(origBottom-origTop)/sh,
+    pockets:seeds.map(s=>({nx:1-s.x/sw, ny:s.y/sh})),
     pocketRFrac:pRScaled/sw,
   };
 }
