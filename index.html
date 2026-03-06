@@ -473,6 +473,8 @@ function physStep(){
   const inv=1/steps;
 
   for(let s=0;s<steps;s++){
+    // Save positions before moving (needed for swept-segment pocket CCD)
+    for(const b of balls) if(b.active){ b.px=b.x; b.py=b.y; }
     // Move (fractional)
     for(const b of balls){
       if(!b.active) continue;
@@ -488,11 +490,22 @@ function physStep(){
         resolvePair(balls[i],balls[j]);
       }
     }
-    // Pocket check
+    // Pocket check — swept segment CCD: test closest point on path to each pocket,
+    // so fast balls cannot tunnel through a pocket between sub-steps.
     for(const b of balls){
       if(!b.active) continue;
       for(const p of pockets){
-        if(Math.hypot(b.x-p.x,b.y-p.y)<pocketR){ sinkBall(b); break; }
+        const dx=b.x-b.px, dy=b.y-b.py;
+        const len2=dx*dx+dy*dy;
+        let d2;
+        if(len2<0.001){
+          d2=(b.x-p.x)**2+(b.y-p.y)**2;
+        } else {
+          const t=Math.max(0,Math.min(1,((p.x-b.px)*dx+(p.y-b.py)*dy)/len2));
+          const cx=b.px+t*dx, cy=b.py+t*dy;
+          d2=(cx-p.x)**2+(cy-p.y)**2;
+        }
+        if(d2<pocketR*pocketR){ sinkBall(b); break; }
       }
     }
   }
@@ -767,7 +780,10 @@ function draw(){
 /* Table */
 function drawTable(){
   if(sprTable&&sprTable.complete&&sprTable.naturalWidth>0){
+    ctx.save();
+    ctx.translate(W,0); ctx.scale(-1,1);
     ctx.drawImage(sprTable,0,0,W,H);
+    ctx.restore();
   }else{
     // Fallback: plain felt + rail rectangles
     const railW=tW*0.13, railH=tH*0.125;
