@@ -152,9 +152,8 @@ const FRICTION     = 0.9875;
 const CUSHION_REST = 0.72;
 const BALL_REST    = 0.95;
 const MIN_SPEED    = 0.12;
-const BALL_R_FRAC  = 1/38;
-const PKT_R_FRAC   = 1/19;
-const CANVAS_AR    = 9/5;       // full canvas width:height (9 tiles × 5 tiles)
+const BALL_R_FRAC  = 1/56;      // ≈0.01786 → ~1.6× real BCA scale (real: 1.125/100=0.01125)
+const CANVAS_AR    = 117/69;    // ≈1.696 → tile tsY=tsX×69/65 gives exactly 2:1 playing surface
 const HUD_H        = 44;
 const MAX_POWER    = 24;
 
@@ -175,7 +174,7 @@ const canvas = document.getElementById('gameCanvas');
 const ctx    = canvas.getContext('2d');
 
 // Layout
-let W, H, tX, tY, tW, tH, ballR, pocketR, railPx, headX;
+let W, H, tX, tY, tW, tH, ballR, pocketR, railPx, railPxY, headX;
 let pockets = [];
 
 // Game
@@ -229,44 +228,40 @@ function loadAssets(){
 function resize(){
   const sw=window.innerWidth, sh=window.innerHeight-HUD_H, mg=10;
   const aw=sw-mg*2, ah=sh-mg*2;
-  // Fit full 9×5 tile canvas into available space
+  // Fit 9×5-tile canvas (CANVAS_AR≈1.696) into available space
   const cW = aw/CANVAS_AR<=ah ? aw : ah*CANVAS_AR;
-  const ts  = Math.round(cW/9);  // integer tile size → pixel-perfect tile seams
-  railPx=ts;
-  // Physics bounds derived from pixel analysis of rail tiles:
-  // left cushion face at 2/3 of tile, right at 8+1/3, top at 25/36, bottom at 4+11/36
-  tX=Math.round(ts*2/3);  tY=Math.round(ts*25/36);
-  tW=9*ts-2*tX;           tH=5*ts-2*tY;  // symmetric from rounded edges
-  W=9*ts; H=5*ts;
+  // Non-square tiles: tsX (horiz) narrower than tsY (vert) by factor 65/69
+  // → felt tW/tH = (9tsX−4/3·tsX)/(5tsY−25/18·tsY) = (23/3·tsX)/(65/18·tsY) = 2 exactly
+  const tsX = Math.round(cW/9);
+  const tsY = Math.round(tsX*69/65);
+  railPx=tsX; railPxY=tsY;
+  // Physics bounds from pixel analysis of rail tiles
+  tX=Math.round(tsX*2/3);   tY=Math.round(tsY*25/36);
+  tW=9*tsX-2*tX;             tH=5*tsY-2*tY;
+  W=9*tsX; H=5*tsY;
   ballR=tW*BALL_R_FRAC;
   headX=tX+tW*0.25;
   canvas.width=W; canvas.height=H;
   canvas.style.width=W+'px'; canvas.style.height=H+'px';
   buildPockets();
-  // Rescale balls
   for(const b of balls){
     b.x=tX+b.nx*tW; b.y=tY+b.ny*tH; b.r=ballR;
   }
 }
 
 function buildPockets(){
-  // Pocket centres and radius derived from pixel analysis of pocket tiles.
-  // Each value is a fraction of ts (screen tile size = railPx).
-  // Corner pocket hole centres (in their respective corner tile):
-  //   TL(col0,row0): (0.5271, 0.5271)  TR(col8,row0): (0.4715, 0.5271)
-  //   BL(col0,row4): (0.5271, 0.4715)  BR(col8,row4): (0.4715, 0.4715)
-  // Mid pocket hole centres (in their tile at col4):
-  //   top(row0): (0.4993, 0.5272)      bot(row4): (0.4993, 0.4715)
-  // Pocket hole max-radius: 0.3884 of a tile.
-  const ts=railPx;
-  pocketR=ts*0.3884;
+  // Pocket centres from pixel analysis of pocket tiles; x fractions use tsX, y use tsY.
+  // Corner pocket hole centres: col-fraction × tsX, row-fraction × tsY.
+  // BCA pocket mouth ≈ 4.625" (corner), ball dia 2.25" → pocketR/ballR ≈ 2.1
+  const tsX=railPx, tsY=railPxY;
+  pocketR=ballR*2.1;
   pockets=[
-    {x:ts*0.5271,  y:ts*0.5271},  // TL corner
-    {x:ts*8.4715,  y:ts*0.5271},  // TR corner
-    {x:ts*4.4993,  y:ts*0.5272},  // top-mid pocket
-    {x:ts*0.5271,  y:ts*4.4715},  // BL corner
-    {x:ts*8.4715,  y:ts*4.4715},  // BR corner
-    {x:ts*4.4993,  y:ts*4.4715},  // bot-mid pocket
+    {x:tsX*0.5271,  y:tsY*0.5271},  // TL corner
+    {x:tsX*8.4715,  y:tsY*0.5271},  // TR corner
+    {x:tsX*4.4993,  y:tsY*0.5272},  // top-mid
+    {x:tsX*0.5271,  y:tsY*4.4715},  // BL corner
+    {x:tsX*8.4715,  y:tsY*4.4715},  // BR corner
+    {x:tsX*4.4993,  y:tsY*4.4715},  // bot-mid
   ];
 }
 
@@ -553,35 +548,31 @@ function draw(){
 /* Table */
 function drawTable(){
   if(sprTile&&tileW>0&&sprTile.complete&&sprTile.naturalWidth>0){
-    // Sprite sheet: 5 cols × 5 rows, tile size = sprTile.width/5 × sprTile.height/5.
-    // Tileset (col,row): felt=(1,0) leftRail=(2,0) rightRail=(3,0)
-    //   TLcorner=(0,1) TLadjTop=(1,1) topRail=(2,1) TRadjTop=(3,1) TRcorner=(4,1)
-    //   TLadjSide=(0,2) topMidAdjL=(1,2) topMidPocket=(2,2) topMidAdjR=(3,2) TRadjSide=(4,2)
-    //   BLadjSide=(0,3) botMidAdjL=(1,3) botMidPocket=(2,3) botMidAdjR=(3,3) BRadjSide=(4,3)
-    //   BLcorner=(0,4) BLadjBot=(1,4) botRail=(2,4) BRadjBot=(3,4) BRcorner=(4,4)
-    // Screen layout: 9 cols × 5 rows, each tile = ts px square.
-    const sw=sprTile.width/5, sh=sprTile.height/5, ts=railPx;
-    const td=(sc,sr,dx,dy)=>ctx.drawImage(sprTile,sc*sw,sr*sh,sw,sh,dx,dy,ts,ts);
+    // Sprite sheet: 5 cols × 5 rows of source tiles.
+    // Tiles are drawn at tsX×tsY (non-square: tsY=tsX×69/65) to achieve 2:1 felt ratio.
+    const sw=sprTile.width/5, sh=sprTile.height/5;
+    const tsX=railPx, tsY=railPxY;
+    const td=(sc,sr,dx,dy)=>ctx.drawImage(sprTile,sc*sw,sr*sh,sw,sh,dx,dy,tsX,tsY);
     // Screen row 0 — top rail
-    td(0,1,0*ts,0); td(1,1,1*ts,0); td(2,1,2*ts,0);
-    td(1,2,3*ts,0); td(2,2,4*ts,0); td(3,2,5*ts,0);
-    td(2,1,6*ts,0); td(3,1,7*ts,0); td(4,1,8*ts,0);
+    td(0,1,0,0);       td(1,1,tsX,0);   td(2,1,2*tsX,0);
+    td(1,2,3*tsX,0);   td(2,2,4*tsX,0); td(3,2,5*tsX,0);
+    td(2,1,6*tsX,0);   td(3,1,7*tsX,0); td(4,1,8*tsX,0);
     // Screen row 1 — TL/TR corner-adjacent side rails + felt
-    td(0,2,0*ts,ts);
-    for(let c=1;c<=7;c++) td(1,0,c*ts,ts);
-    td(4,2,8*ts,ts);
+    td(0,2,0,tsY);
+    for(let c=1;c<=7;c++) td(1,0,c*tsX,tsY);
+    td(4,2,8*tsX,tsY);
     // Screen row 2 — straight side rails + felt
-    td(2,0,0*ts,2*ts);
-    for(let c=1;c<=7;c++) td(1,0,c*ts,2*ts);
-    td(3,0,8*ts,2*ts);
+    td(2,0,0,2*tsY);
+    for(let c=1;c<=7;c++) td(1,0,c*tsX,2*tsY);
+    td(3,0,8*tsX,2*tsY);
     // Screen row 3 — BL/BR corner-adjacent side rails + felt
-    td(0,3,0*ts,3*ts);
-    for(let c=1;c<=7;c++) td(1,0,c*ts,3*ts);
-    td(4,3,8*ts,3*ts);
+    td(0,3,0,3*tsY);
+    for(let c=1;c<=7;c++) td(1,0,c*tsX,3*tsY);
+    td(4,3,8*tsX,3*tsY);
     // Screen row 4 — bottom rail
-    td(0,4,0*ts,4*ts); td(1,4,1*ts,4*ts); td(2,4,2*ts,4*ts);
-    td(1,3,3*ts,4*ts); td(2,3,4*ts,4*ts); td(3,3,5*ts,4*ts);
-    td(2,4,6*ts,4*ts); td(3,4,7*ts,4*ts); td(4,4,8*ts,4*ts);
+    td(0,4,0,4*tsY);     td(1,4,tsX,4*tsY);   td(2,4,2*tsX,4*tsY);
+    td(1,3,3*tsX,4*tsY); td(2,3,4*tsX,4*tsY); td(3,3,5*tsX,4*tsY);
+    td(2,4,6*tsX,4*tsY); td(3,4,7*tsX,4*tsY); td(4,4,8*tsX,4*tsY);
   }else{
     // Fallback
     ctx.fillStyle='#4e2508';
