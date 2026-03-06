@@ -139,7 +139,7 @@ html,body{
 
 <div id="overlay">
   <h1>8-BALL POOL</h1>
-  <p class="sub">Tap &amp; hold to aim and charge power.<br>Release to shoot.</p>
+  <p class="sub">Drag the cue backward to aim and set power.<br>Further back = more power. Release to shoot.</p>
   <button class="obtn" onclick="startGame()">BREAK!</button>
 </div>
 
@@ -184,7 +184,7 @@ let tableOpen=true, breakShot=true;
 let pottedNow=[], firstHit=null, railHit=false, hasFoul=false;
 
 // Input
-let aiming=false, aimPos=null, pressStart=0;
+let aiming=false, aimPos=null;
 let bih=false, bihPos=null;
 
 // Settling guard
@@ -675,48 +675,56 @@ function lgt(hex,a){
   return `rgb(${Math.min(255,(n>>16)+a)},${Math.min(255,((n>>8)&0xff)+a)},${Math.min(255,(n&0xff)+a)})`;
 }
 
-/* Cue */
+/* Cue — slingshot controls */
 function drawCue(){
   if(gs!=='playing'||!aiming||!aimPos) return;
   const cue=getCue(); if(!cue) return;
-  const angle=Math.atan2(aimPos.y-cue.y,aimPos.x-cue.x);
-  const opp=angle+Math.PI;
-  const ll=tW*0.42;
 
-  // Aim line
+  // Drag vector: aimPos is where the player pulled to (behind the ball).
+  // Shoot direction is from aimPos → cue ball (and beyond).
+  const dx=cue.x-aimPos.x, dy=cue.y-aimPos.y;
+  const pullDist=Math.hypot(dx,dy);
+  if(pullDist<1) return;
+
+  const shootAngle=Math.atan2(dy,dx);        // from pull point toward cue ball
+  const dragAngle =shootAngle+Math.PI;        // from cue ball toward pull point
+
+  const powerFrac=Math.min(1,pullDist/(tW*0.28));
+  document.getElementById('pwf').style.width=(powerFrac*100)+'%';
+
+  const cueL=tW*0.46;
+  // Tip retreats from ball as power grows (0 → 5 ball-radii of pullback)
+  const tipDist=ballR*1.3+powerFrac*ballR*5;
+  const tipX=cue.x+Math.cos(dragAngle)*tipDist;
+  const tipY=cue.y+Math.sin(dragAngle)*tipDist;
+
   ctx.save();
+
+  // Aim line (shoot direction)
   ctx.strokeStyle='rgba(255,255,255,.28)'; ctx.lineWidth=1; ctx.setLineDash([9,7]);
   ctx.beginPath();
-  ctx.moveTo(cue.x+Math.cos(angle)*ballR*1.1,cue.y+Math.sin(angle)*ballR*1.1);
-  ctx.lineTo(cue.x+Math.cos(angle)*ll,cue.y+Math.sin(angle)*ll);
+  ctx.moveTo(cue.x+Math.cos(shootAngle)*ballR*1.1, cue.y+Math.sin(shootAngle)*ballR*1.1);
+  ctx.lineTo(cue.x+Math.cos(shootAngle)*tW*0.42,   cue.y+Math.sin(shootAngle)*tW*0.42);
   ctx.stroke(); ctx.setLineDash([]);
 
   // Ghost ball
-  const gx=cue.x+Math.cos(angle)*ballR*2.8;
-  const gy=cue.y+Math.sin(angle)*ballR*2.8;
-  ctx.beginPath(); ctx.arc(gx,gy,ballR,0,Math.PI*2);
+  ctx.beginPath();
+  ctx.arc(cue.x+Math.cos(shootAngle)*ballR*2.8, cue.y+Math.sin(shootAngle)*ballR*2.8, ballR, 0, Math.PI*2);
   ctx.strokeStyle='rgba(255,255,255,.2)'; ctx.lineWidth=1.5; ctx.stroke();
 
-  // Cue stick
-  const hms=Date.now()-pressStart;
-  const pwr=Math.min(MAX_POWER,Math.max(3,(hms/1200)*MAX_POWER));
-  const pull=pwr*2.2;
-  const cueL=tW*0.46;
-  const tx=cue.x+Math.cos(opp)*(ballR*1.3+pull);
-  const ty=cue.y+Math.sin(opp)*(ballR*1.3+pull);
-
+  // Cue stick: tip near ball, butt toward pull point
   if(sprCue&&sprCue.complete&&sprCue.naturalWidth>0){
-    ctx.translate(tx,ty); ctx.rotate(opp);
+    ctx.translate(tipX,tipY); ctx.rotate(dragAngle);
     const ch=cueL*0.13;
     ctx.drawImage(sprCue,0,-ch/2,cueL,ch);
   }else{
-    const bx=tx+Math.cos(opp)*cueL;
-    const by=ty+Math.sin(opp)*cueL;
-    const g2=ctx.createLinearGradient(tx,ty,bx,by);
+    const buttX=tipX+Math.cos(dragAngle)*cueL;
+    const buttY=tipY+Math.sin(dragAngle)*cueL;
+    const g2=ctx.createLinearGradient(tipX,tipY,buttX,buttY);
     g2.addColorStop(0,'#d0e8f8'); g2.addColorStop(.08,'#c8a030');
     g2.addColorStop(.5,'#d8b448'); g2.addColorStop(1,'#3a1a06');
     ctx.strokeStyle=g2; ctx.lineWidth=6; ctx.lineCap='round';
-    ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(bx,by); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(tipX,tipY); ctx.lineTo(buttX,buttY); ctx.stroke();
   }
   ctx.restore();
 }
@@ -779,7 +787,7 @@ function onDn(e){
   }
   if(gs!=='playing') return;
   const cue=getCue(); if(!cue) return;
-  aiming=true; aimPos=pos; pressStart=Date.now();
+  aiming=true; aimPos=pos;
   document.getElementById('pw').classList.add('show');
 }
 
@@ -799,9 +807,11 @@ function onUp(e){
   aiming=false;
   if(gs!=='playing') return;
   const cue=getCue(); if(!cue||!aimPos) return;
-  const hms=Date.now()-pressStart;
-  const power=Math.max(3,Math.min(MAX_POWER,(hms/1200)*MAX_POWER));
-  const angle=Math.atan2(aimPos.y-cue.y,aimPos.x-cue.x);
+  const dx=cue.x-aimPos.x, dy=cue.y-aimPos.y;
+  const dist=Math.hypot(dx,dy);
+  if(dist<ballR*0.5) return; // ignore accidental taps
+  const angle=Math.atan2(dy,dx);  // from pull point toward cue ball = shoot direction
+  const power=Math.min(MAX_POWER,(dist/(tW*0.28))*MAX_POWER);
   shoot(power,angle);
 }
 
@@ -839,11 +849,6 @@ let physAcc=0, lastTs=0;
 
 function loop(ts){
   const dt=Math.min(ts-lastTs,50); lastTs=ts;
-
-  if(aiming&&gs==='playing'){
-    const pct=Math.min(100,((Date.now()-pressStart)/1200)*100);
-    document.getElementById('pwf').style.width=pct+'%';
-  }
 
   if(gs==='animating'){
     physAcc+=dt;
