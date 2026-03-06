@@ -153,7 +153,7 @@ const CUSHION_REST = 0.72;
 const BALL_REST    = 0.95;
 const MIN_SPEED    = 0.12;
 const BALL_R_FRAC  = 1/56;      // ≈0.01786 → ~1.6× real BCA scale (real: 1.125/100=0.01125)
-const CANVAS_AR    = 117/69;    // ≈1.696 → tile tsY=tsX×69/65 gives exactly 2:1 playing surface
+const CANVAS_AR    = 4551/2570; // table.png natural aspect ratio
 const HUD_H        = 44;
 const MAX_POWER    = 15;
 const STRIKE_MS    = 90;    // cue-forward animation duration on release
@@ -176,7 +176,7 @@ const canvas = document.getElementById('gameCanvas');
 const ctx    = canvas.getContext('2d');
 
 // Layout
-let W, H, tX, tY, tW, tH, ballR, pocketR, railPx, railPxY, headX;
+let W, H, tX, tY, tW, tH, ballR, pocketR, headX;
 let pockets = [];
 
 // Game
@@ -193,7 +193,7 @@ let bih=false, bihPos=null;
 let settling=false;
 
 // Sprites
-let sprBalls={}, sprCue=null, sprTile=null, tileW=0, tileH=0;
+let sprBalls={}, sprCue=null, sprTable=null, tableCalib=null;
 let foulTmr=null;
 
 // Animations / audio
@@ -218,14 +218,13 @@ function loadAssets(){
     sprCue.onload=sprCue.onerror=tick;
     sprCue.src=ASSET+'pool_cue.png';
 
-    sprTile=new Image(); sprTile.crossOrigin='anonymous';
-    sprTile.onload=()=>{
-      tileW=Math.floor(sprTile.width/5);
-      tileH=Math.floor(sprTile.height/5);
+    sprTable=new Image(); sprTable.crossOrigin='anonymous';
+    sprTable.onload=()=>{
+      tableCalib=calibrateTable(sprTable);
       tick();
     };
-    sprTile.onerror=tick;
-    sprTile.src=ASSET+'pool_table_tileset.png';
+    sprTable.onerror=tick;
+    sprTable.src=ASSET+'table.png';
   });
 }
 
@@ -298,26 +297,120 @@ function findFirstHit(ox,oy,ddx,ddy){
 }
 
 /* ════════════════════════════════════════════════════
+   TABLE CALIBRATION
+   Auto-detects felt bounds and pocket positions from
+   pixel colours in table.png:
+     black pixels  (R<30, G<30, B<30)  → pockets
+     dark green    (G dominant, below median brightness) → felt
+     light green   (G dominant, above median brightness) → rail
+════════════════════════════════════════════════════ */
+function calibrateTable(img){
+  const SCALE=0.1;
+  const sw=Math.max(1,Math.round(img.naturalWidth*SCALE));
+  const sh=Math.max(1,Math.round(img.naturalHeight*SCALE));
+  const oc=document.createElement('canvas'); oc.width=sw; oc.height=sh;
+  const ox=oc.getContext('2d',{willReadFrequently:true});
+  ox.drawImage(img,0,0,sw,sh);
+  const data=ox.getImageData(0,0,sw,sh).data;
+
+  const blackPx=[];
+  const greenPx=[];
+  const greenBrights=[];
+
+  for(let y=0;y<sh;y++){
+    for(let x=0;x<sw;x++){
+      const i=(y*sw+x)*4;
+      const r=data[i],g=data[i+1],b=data[i+2];
+      const bright=(r+g+b)/3;
+      if(r<30&&g<30&&b<30){
+        blackPx.push({x,y});
+      } else if(g>r*1.15&&g>b*1.15&&bright>10){
+        greenPx.push({x,y,bright});
+        greenBrights.push(bright);
+      }
+    }
+  }
+
+  // Median-split green pixels → below median = dark (felt), above = light (rail)
+  const sorted=[...greenBrights].sort((a,b)=>a-b);
+  const medBright=sorted[Math.floor(sorted.length/2)]||100;
+
+  let fMinX=sw,fMaxX=0,fMinY=sh,fMaxY=0;
+  for(const {x,y,bright} of greenPx){
+    if(bright<=medBright){
+      if(x<fMinX)fMinX=x; if(x>fMaxX)fMaxX=x;
+      if(y<fMinY)fMinY=y; if(y>fMaxY)fMaxY=y;
+    }
+  }
+
+  // K-means with 6 seeds at expected pocket positions relative to felt bounds
+  const fw=fMaxX-fMinX, fh=fMaxY-fMinY;
+  let seeds=[
+    {x:fMinX,        y:fMinY},
+    {x:fMinX+fw,     y:fMinY},
+    {x:fMinX+fw/2,   y:fMinY},
+    {x:fMinX,        y:fMinY+fh},
+    {x:fMinX+fw,     y:fMinY+fh},
+    {x:fMinX+fw/2,   y:fMinY+fh},
+  ];
+  for(let iter=0;iter<6;iter++){
+    const sums=seeds.map(()=>({x:0,y:0,n:0}));
+    for(const {x,y} of blackPx){
+      let best=0,bestD=Infinity;
+      for(let k=0;k<6;k++){
+        const d=(x-seeds[k].x)**2+(y-seeds[k].y)**2;
+        if(d<bestD){bestD=d;best=k;}
+      }
+      sums[best].x+=x; sums[best].y+=y; sums[best].n++;
+    }
+    seeds=sums.map((s,k)=>s.n>0?{x:s.x/s.n,y:s.y/s.n}:seeds[k]);
+  }
+
+  // Pocket radius from average cluster pixel count
+  const counts=new Array(6).fill(0);
+  for(const {x,y} of blackPx){
+    let best=0,bestD=Infinity;
+    for(let k=0;k<6;k++){
+      const d=(x-seeds[k].x)**2+(y-seeds[k].y)**2;
+      if(d<bestD){bestD=d;best=k;}
+    }
+    counts[best]++;
+  }
+  const avgCount=counts.reduce((a,b)=>a+b,0)/6;
+  const pRScaled=Math.sqrt(avgCount/Math.PI);
+
+  return{
+    feltNX:fMinX/sw, feltNY:fMinY/sh,
+    feltNW:fw/sw,     feltNH:fh/sh,
+    pockets:seeds.map(s=>({nx:s.x/sw,ny:s.y/sh})),
+    pocketRFrac:pRScaled/sw,
+  };
+}
+
+/* ════════════════════════════════════════════════════
    LAYOUT
 ════════════════════════════════════════════════════ */
 function resize(){
   const sw=window.innerWidth, sh=window.innerHeight-HUD_H, mg=10;
   const aw=sw-mg*2, ah=sh-mg*2;
-  // Fit 9×5-tile canvas (CANVAS_AR≈1.696) into available space
-  const cW = aw/CANVAS_AR<=ah ? aw : ah*CANVAS_AR;
-  // Non-square tiles: tsX (horiz) narrower than tsY (vert) by factor 65/69
-  // → felt tW/tH = (9tsX−4/3·tsX)/(5tsY−25/18·tsY) = (23/3·tsX)/(65/18·tsY) = 2 exactly
-  const tsX = Math.round(cW/9);
-  const tsY = Math.round(tsX*69/65);
-  railPx=tsX; railPxY=tsY;
-  // Physics bounds from pixel analysis of rail tiles
-  tX=Math.round(tsX*2/3);   tY=Math.round(tsY*25/36);
-  tW=9*tsX-2*tX;             tH=5*tsY-2*tY;
-  W=9*tsX; H=5*tsY;
-  ballR=tW*BALL_R_FRAC;
-  headX=tX+tW*0.25;
+  // Fit table.png aspect ratio into available space
+  const cW=aw/CANVAS_AR<=ah ? aw : ah*CANVAS_AR;
+  W=Math.round(cW); H=Math.round(cW/CANVAS_AR);
   canvas.width=W; canvas.height=H;
   canvas.style.width=W+'px'; canvas.style.height=H+'px';
+  // Derive physics bounds from calibration fractions (or safe fallback)
+  if(tableCalib){
+    tX=Math.round(tableCalib.feltNX*W);
+    tY=Math.round(tableCalib.feltNY*H);
+    tW=Math.round(tableCalib.feltNW*W);
+    tH=Math.round(tableCalib.feltNH*H);
+  } else {
+    // Fallback: assume felt occupies the central ~74%×80% of canvas
+    tX=Math.round(W*0.13); tY=Math.round(H*0.10);
+    tW=Math.round(W*0.74); tH=Math.round(H*0.80);
+  }
+  ballR=tW*BALL_R_FRAC;
+  headX=tX+tW*0.25;
   buildPockets();
   for(const b of balls){
     b.x=tX+b.nx*tW; b.y=tY+b.ny*tH; b.r=ballR;
@@ -325,19 +418,21 @@ function resize(){
 }
 
 function buildPockets(){
-  // Pocket centres from pixel analysis of pocket tiles; x fractions use tsX, y use tsY.
-  // Visual pocket hole radius = tsX×0.3884 (from sprite pixel measurement).
-  // Physics hitbox matches the visual so balls sink exactly when they enter the hole.
-  const tsX=railPx, tsY=railPxY;
-  pocketR=tsX*0.3884;
-  pockets=[
-    {x:tsX*0.5271,  y:tsY*0.5271},  // TL corner
-    {x:tsX*8.4715,  y:tsY*0.5271},  // TR corner
-    {x:tsX*4.4993,  y:tsY*0.5272},  // top-mid
-    {x:tsX*0.5271,  y:tsY*4.4715},  // BL corner
-    {x:tsX*8.4715,  y:tsY*4.4715},  // BR corner
-    {x:tsX*4.4993,  y:tsY*4.4715},  // bot-mid
-  ];
+  if(tableCalib){
+    pocketR=tableCalib.pocketRFrac*W;
+    pockets=tableCalib.pockets.map(p=>({x:p.nx*W, y:p.ny*H}));
+  } else {
+    // Fallback: estimate pocket positions from felt bounds
+    pocketR=tW*0.045;
+    pockets=[
+      {x:tX,        y:tY},
+      {x:tX+tW,     y:tY},
+      {x:tX+tW/2,   y:tY},
+      {x:tX,        y:tY+tH},
+      {x:tX+tW,     y:tY+tH},
+      {x:tX+tW/2,   y:tY+tH},
+    ];
+  }
 }
 
 /* ════════════════════════════════════════════════════
@@ -671,56 +766,20 @@ function draw(){
 
 /* Table */
 function drawTable(){
-  if(sprTile&&tileW>0&&sprTile.complete&&sprTile.naturalWidth>0){
-    // Sprite sheet: 5 cols × 5 rows of source tiles.
-    // Tiles are drawn at tsX×tsY (non-square: tsY=tsX×69/65) to achieve 2:1 felt ratio.
-    const sw=sprTile.width/5, sh=sprTile.height/5;
-    const tsX=railPx, tsY=railPxY;
-    const td=(sc,sr,dx,dy)=>ctx.drawImage(sprTile,sc*sw,sr*sh,sw,sh,dx,dy,tsX,tsY);
-    // Screen row 0 — top rail
-    td(0,1,0,0);       td(1,1,tsX,0);   td(2,1,2*tsX,0);
-    td(1,2,3*tsX,0);   td(2,2,4*tsX,0); td(3,2,5*tsX,0);
-    td(2,1,6*tsX,0);   td(3,1,7*tsX,0); td(4,1,8*tsX,0);
-    // Screen row 1 — TL/TR corner-adjacent side rails + felt
-    td(0,2,0,tsY);
-    for(let c=1;c<=7;c++) td(1,0,c*tsX,tsY);
-    td(4,2,8*tsX,tsY);
-    // Screen row 2 — straight side rails + felt
-    td(2,0,0,2*tsY);
-    for(let c=1;c<=7;c++) td(1,0,c*tsX,2*tsY);
-    td(3,0,8*tsX,2*tsY);
-    // Screen row 3 — BL/BR corner-adjacent side rails + felt
-    td(0,3,0,3*tsY);
-    for(let c=1;c<=7;c++) td(1,0,c*tsX,3*tsY);
-    td(4,3,8*tsX,3*tsY);
-    // Screen row 4 — bottom rail
-    td(0,4,0,4*tsY);     td(1,4,tsX,4*tsY);   td(2,4,2*tsX,4*tsY);
-    td(1,3,3*tsX,4*tsY); td(2,3,4*tsX,4*tsY); td(3,3,5*tsX,4*tsY);
-    td(2,4,6*tsX,4*tsY); td(3,4,7*tsX,4*tsY); td(4,4,8*tsX,4*tsY);
+  if(sprTable&&sprTable.complete&&sprTable.naturalWidth>0){
+    ctx.drawImage(sprTable,0,0,W,H);
   }else{
-    // Fallback
+    // Fallback: plain felt + rail rectangles
+    const railW=tW*0.13, railH=tH*0.125;
     ctx.fillStyle='#4e2508';
-    rRect(tX-railPx,tY-railPx,tW+railPx*2,tH+railPx*2,8);
+    rRect(tX-railW,tY-railH,tW+railW*2,tH+railH*2,8);
     ctx.fill();
     ctx.strokeStyle='#7a4818'; ctx.lineWidth=3;
-    rRect(tX-railPx+2,tY-railPx+2,tW+railPx*2-4,tH+railPx*2-4,7);
+    rRect(tX-railW+2,tY-railH+2,tW+railW*2-4,tH+railH*2-4,7);
     ctx.stroke();
     const fg=ctx.createLinearGradient(tX,tY,tX+tW,tY+tH);
     fg.addColorStop(0,'#1a6b35');fg.addColorStop(.5,'#1d7a3a');fg.addColorStop(1,'#166030');
     ctx.fillStyle=fg; ctx.fillRect(tX,tY,tW,tH);
-    ctx.strokeStyle='rgba(0,0,0,.06)'; ctx.lineWidth=1;
-    for(let i=0;i<tW;i+=10){
-      ctx.beginPath(); ctx.moveTo(tX+i,tY); ctx.lineTo(tX+i,tY+tH); ctx.stroke();
-    }
-    ctx.strokeStyle='rgba(255,255,255,.12)'; ctx.setLineDash([5,5]);
-    ctx.beginPath(); ctx.moveTo(headX,tY); ctx.lineTo(headX,tY+tH); ctx.stroke();
-    ctx.setLineDash([]);
-    [[headX,tY+tH*.5,3,'rgba(255,255,255,.25)'],
-     [tX+tW*.5,tY+tH*.5,3,'rgba(255,255,255,.25)'],
-     [tX+tW*.75,tY+tH*.5,4,'rgba(255,255,255,.35)']].forEach(([x,y,r,c])=>{
-       ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2);
-       ctx.fillStyle=c; ctx.fill();
-     });
   }
 }
 
