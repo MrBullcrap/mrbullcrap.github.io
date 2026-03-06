@@ -313,7 +313,6 @@ function calibrateTable(img){
   ox.drawImage(img,0,0,sw,sh);
   const data=ox.getImageData(0,0,sw,sh).data;
 
-  const blackPx=[];
   // Per-column and per-row counts of rail-bright pixels.
   // Rail green: green-dominant AND brightness in [90,100].
   // The table sprite has a clear bimodal gap: felt peaks at 60-74, rail at 95-99,
@@ -326,9 +325,7 @@ function calibrateTable(img){
       const i=(y*sw+x)*4;
       const r=data[i],g=data[i+1],b=data[i+2];
       const bright=(r+g+b)/3;
-      if(r<30&&g<30&&b<30){
-        blackPx.push({x,y});
-      } else if(g>r*1.15&&g>b*1.15&&bright>=90&&bright<=100){
+      if(g>r*1.15&&g>b*1.15&&bright>=90&&bright<=100){
         colRail[x]++;
         rowRail[y]++;
       }
@@ -350,41 +347,35 @@ function calibrateTable(img){
   let origBottom=sh;
   {let in_=false; for(let y=sh-1;y>sh>>1;y--){if(!in_&&rFrac(y)>HIGH)in_=true; if(in_&&rFrac(y)<LOW){origBottom=y+1;break;}}}
 
-  // K-means pocket detection seeded at the expected pocket locations
-  const fw=origRight-origLeft, fh=origBottom-origTop;
-  let seeds=[
-    {x:origLeft,      y:origTop},
-    {x:origRight,     y:origTop},
-    {x:origLeft+fw/2, y:origTop},
-    {x:origLeft,      y:origBottom},
-    {x:origRight,     y:origBottom},
-    {x:origLeft+fw/2, y:origBottom},
-  ];
-  for(let iter=0;iter<6;iter++){
-    const sums=seeds.map(()=>({x:0,y:0,n:0}));
-    for(const {x,y} of blackPx){
-      let best=0,bestD=Infinity;
-      for(let k=0;k<6;k++){
-        const d=(x-seeds[k].x)**2+(y-seeds[k].y)**2;
-        if(d<bestD){bestD=d;best=k;}
-      }
-      sums[best].x+=x; sums[best].y+=y; sums[best].n++;
-    }
-    seeds=sums.map((s,k)=>s.n>0?{x:s.x/s.n,y:s.y/s.n}:seeds[k]);
-  }
+  // Connected-component flood-fill pocket detection.
+  // Every black pixel belongs to exactly one blob; the 6 largest blobs are pockets.
+  // Smaller blobs (decorative frame elements) are discarded automatically.
+  const blackFlat=new Uint8Array(sw*sh);
+  for(let y=0;y<sh;y++) for(let x=0;x<sw;x++) if(data[(y*sw+x)*4]<30&&data[(y*sw+x)*4+1]<30&&data[(y*sw+x)*4+2]<30) blackFlat[y*sw+x]=1;
 
-  // Pocket radius from average cluster area
-  const counts=new Array(6).fill(0);
-  for(const {x,y} of blackPx){
-    let best=0,bestD=Infinity;
-    for(let k=0;k<6;k++){
-      const d=(x-seeds[k].x)**2+(y-seeds[k].y)**2;
-      if(d<bestD){bestD=d;best=k;}
+  const visited=new Uint8Array(sw*sh);
+  const clusters=[];
+  const queue=new Int32Array(sw*sh); // reusable BFS queue
+  for(let start=0;start<sw*sh;start++){
+    if(!blackFlat[start]||visited[start]) continue;
+    visited[start]=1;
+    let qi=0,qe=0, sumX=0,sumY=0,n=0;
+    queue[qe++]=start;
+    while(qi<qe){
+      const idx=queue[qi++];
+      const cx=idx%sw, cy=(idx/sw)|0;
+      sumX+=cx; sumY+=cy; n++;
+      if(cx>0    &&!visited[idx-1] &&blackFlat[idx-1]) {visited[idx-1]=1; queue[qe++]=idx-1;}
+      if(cx<sw-1 &&!visited[idx+1] &&blackFlat[idx+1]) {visited[idx+1]=1; queue[qe++]=idx+1;}
+      if(cy>0    &&!visited[idx-sw]&&blackFlat[idx-sw]){visited[idx-sw]=1;queue[qe++]=idx-sw;}
+      if(cy<sh-1 &&!visited[idx+sw]&&blackFlat[idx+sw]){visited[idx+sw]=1;queue[qe++]=idx+sw;}
     }
-    counts[best]++;
+    if(n>=20) clusters.push({cx:sumX/n, cy:sumY/n, n});
   }
-  const avgCount=counts.reduce((a,b)=>a+b,0)/6;
-  const pRScaled=Math.sqrt(avgCount/Math.PI);
+  clusters.sort((a,b)=>b.n-a.n);
+  const pockets6=clusters.slice(0,6);
+  const avgArea=pockets6.reduce((s,c)=>s+c.n,0)/6;
+  const pRScaled=Math.sqrt(avgArea/Math.PI);
 
   // Mirror x-coordinates to match the horizontal flip applied in drawTable().
   // A pixel at original x appears at screen x = W*(1 - x/sw) after the flip.
@@ -395,7 +386,7 @@ function calibrateTable(img){
     feltNY:origTop/sh,
     feltNW:(origRight-origLeft)/sw,
     feltNH:(origBottom-origTop)/sh,
-    pockets:seeds.map(s=>({nx:1-s.x/sw, ny:s.y/sh})),
+    pockets:pockets6.map(c=>({nx:1-c.cx/sw, ny:c.cy/sh})),
     pocketRFrac:pRScaled/sw,
   };
 }
