@@ -324,7 +324,7 @@ function physStep(){
   for(const b of balls){
     if(!b.active) continue;
     for(const p of pockets){
-      if(Math.hypot(b.x-p.x,b.y-p.y)<pocketR*0.82){ sinkBall(b); break; }
+      if(Math.hypot(b.x-p.x,b.y-p.y)<pocketR){ sinkBall(b); break; }
     }
   }
 }
