@@ -156,6 +156,8 @@ const BALL_R_FRAC  = 1/56;      // ≈0.01786 → ~1.6× real BCA scale (real: 1
 const CANVAS_AR    = 117/69;    // ≈1.696 → tile tsY=tsX×69/65 gives exactly 2:1 playing surface
 const HUD_H        = 44;
 const MAX_POWER    = 24;
+const STRIKE_MS    = 90;    // cue-forward animation duration on release
+const SINK_MS      = 380;   // pocket-drop animation duration
 
 const SOLIDS  = [1,2,3,4,5,6,7];
 const STRIPES = [9,10,11,12,13,14,15];
@@ -194,6 +196,11 @@ let settling=false;
 let sprBalls={}, sprCue=null, sprTile=null, tileW=0, tileH=0;
 let foulTmr=null;
 
+// Animations / audio
+let strikeAnim=null;        // {cx,cy,dragAngle,tipDist0,startMs}
+let kitchen=false;          // restrict BIH to behind head string
+let lastBallSnd=0, lastCushionSnd=0;
+
 /* ════════════════════════════════════════════════════
    ASSETS
 ════════════════════════════════════════════════════ */
@@ -220,6 +227,74 @@ function loadAssets(){
     sprTile.onerror=tick;
     sprTile.src=ASSET+'pool_table_tileset.png';
   });
+}
+
+/* ════════════════════════════════════════════════════
+   AUDIO  (Web Audio API synthesis — no external files)
+════════════════════════════════════════════════════ */
+let _ac=null;
+function _getAC(){
+  if(!_ac) try{_ac=new(window.AudioContext||window.webkitAudioContext)();}catch(e){}
+  return _ac;
+}
+function sndHit(vol=1){
+  const a=_getAC(); if(!a) return;
+  try{
+    const t=a.currentTime;
+    const len=Math.ceil(a.sampleRate*0.045);
+    const buf=a.createBuffer(1,len,a.sampleRate);
+    const d=buf.getChannelData(0);
+    for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,3);
+    const src=a.createBufferSource(); src.buffer=buf;
+    const f=a.createBiquadFilter(); f.type='bandpass'; f.frequency.value=2400; f.Q.value=0.7;
+    const g=a.createGain(); g.gain.setValueAtTime(Math.min(1,vol)*1.1,t);
+    src.connect(f); f.connect(g); g.connect(a.destination); src.start(t);
+  }catch(e){}
+}
+function sndCushion(){
+  const a=_getAC(); if(!a) return;
+  try{
+    const t=a.currentTime;
+    const o=a.createOscillator(); o.type='sine';
+    o.frequency.setValueAtTime(170,t); o.frequency.exponentialRampToValueAtTime(55,t+0.13);
+    const g=a.createGain();
+    g.gain.setValueAtTime(0.28,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.15);
+    o.connect(g); g.connect(a.destination); o.start(t); o.stop(t+0.16);
+  }catch(e){}
+}
+function sndPocket(){
+  const a=_getAC(); if(!a) return;
+  try{
+    const t=a.currentTime, dur=0.32;
+    const len=Math.ceil(a.sampleRate*dur);
+    const buf=a.createBuffer(1,len,a.sampleRate);
+    const d=buf.getChannelData(0);
+    for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,1.4)*0.8;
+    const src=a.createBufferSource(); src.buffer=buf;
+    const f=a.createBiquadFilter(); f.type='lowpass';
+    f.frequency.setValueAtTime(900,t); f.frequency.exponentialRampToValueAtTime(80,t+dur);
+    const g=a.createGain(); g.gain.setValueAtTime(0.6,t); g.gain.exponentialRampToValueAtTime(0.001,t+dur);
+    src.connect(f); f.connect(g); g.connect(a.destination); src.start(t);
+  }catch(e){}
+}
+
+/* ════════════════════════════════════════════════════
+   AIM RAY — find first object ball in shoot direction
+════════════════════════════════════════════════════ */
+function findFirstHit(ox,oy,ddx,ddy){
+  let minT=Infinity, hitBall=null;
+  for(const b of balls){
+    if(!b.active||b.num===0) continue;
+    const ex=b.x-ox, ey=b.y-oy;
+    const proj=ex*ddx+ey*ddy;
+    if(proj<=0) continue;
+    const perp2=ex*ex+ey*ey-proj*proj;
+    const r2=4*ballR*ballR;
+    if(perp2>=r2) continue;
+    const t=proj-Math.sqrt(r2-perp2);
+    if(t>0&&t<minT){minT=t;hitBall=b;}
+  }
+  return hitBall?{t:minT,ball:hitBall}:null;
 }
 
 /* ════════════════════════════════════════════════════
@@ -287,7 +362,7 @@ function rack(){
       balls.push(mkBall(ra[col],nx,ny));
     }
   }
-  balls.unshift(mkBall(0,0.25,0.5));
+  // Cue ball NOT placed here — caller must place it (BIH kitchen or auto)
 }
 
 function getCue(){ return balls.find(b=>b.num===0&&b.active); }
@@ -332,10 +407,12 @@ function physStep(){
 function wallBounce(b){
   const nearP=pockets.some(p=>Math.hypot(b.x-p.x,b.y-p.y)<pocketR*1.1);
   if(nearP) return;
-  if(b.x-b.r<tX){ b.x=tX+b.r; b.vx=Math.abs(b.vx)*CUSHION_REST; }
-  if(b.x+b.r>tX+tW){ b.x=tX+tW-b.r; b.vx=-Math.abs(b.vx)*CUSHION_REST; }
-  if(b.y-b.r<tY){ b.y=tY+b.r; b.vy=Math.abs(b.vy)*CUSHION_REST; }
-  if(b.y+b.r>tY+tH){ b.y=tY+tH-b.r; b.vy=-Math.abs(b.vy)*CUSHION_REST; }
+  let hit=false;
+  if(b.x-b.r<tX){ b.x=tX+b.r; b.vx=Math.abs(b.vx)*CUSHION_REST; hit=true; }
+  if(b.x+b.r>tX+tW){ b.x=tX+tW-b.r; b.vx=-Math.abs(b.vx)*CUSHION_REST; hit=true; }
+  if(b.y-b.r<tY){ b.y=tY+b.r; b.vy=Math.abs(b.vy)*CUSHION_REST; hit=true; }
+  if(b.y+b.r>tY+tH){ b.y=tY+tH-b.r; b.vy=-Math.abs(b.vy)*CUSHION_REST; hit=true; }
+  if(hit){ const n=performance.now(); if(n-lastCushionSnd>80){lastCushionSnd=n;sndCushion();} }
 }
 
 function resolvePair(a,b){
@@ -356,6 +433,8 @@ function resolvePair(a,b){
   const dvx=a.vx-b.vx, dvy=a.vy-b.vy;
   const dot=dvx*nx+dvy*ny;
   if(dot<=0) return;
+  const n2=performance.now();
+  if(n2-lastBallSnd>80){ lastBallSnd=n2; sndHit(Math.min(1,dot/8)); }
   const imp=dot*BALL_REST;
   a.vx-=imp*nx; a.vy-=imp*ny;
   b.vx+=imp*nx; b.vy+=imp*ny;
@@ -365,6 +444,15 @@ function sinkBall(b){
   b.active=false; b.potted=true; b.vx=0; b.vy=0;
   pottedNow.push(b.num);
   b.nx=(b.x-tX)/tW; b.ny=(b.y-tY)/tH;
+  // Find nearest pocket for drop animation
+  const nearP=pockets.reduce((best,p)=>{
+    const d=Math.hypot(b.x-p.x,b.y-p.y);
+    return d<best.d?{d,p}:best;
+  },{d:Infinity,p:pockets[0]}).p;
+  b.sinking=true; b.sinkMs=performance.now();
+  b.sinkX=b.x; b.sinkY=b.y;
+  b.sinkPx=nearP.x; b.sinkPy=nearP.y;
+  sndPocket();
 }
 
 function allStopped(){
@@ -417,7 +505,7 @@ function afterShot(){
   if(hasFoul){
     showFoul(foulReason);
     restoreCue();
-    switchP(true);
+    switchP(true, breakShot&&cuePot); // kitchen BIH only on break scratch
     breakShot=false;
     return;
   }
@@ -461,15 +549,20 @@ function myGroupClear(){
 
 function restoreCue(){
   let c=balls.find(b=>b.num===0);
-  if(!c){ c=mkBall(0,0.25,0.5); balls.unshift(c); }
+  if(!c){ c=mkBall(0,0.18,0.5); balls.unshift(c); }
   else{ c.active=true; c.potted=false; c.vx=0; c.vy=0; }
 }
 
-function switchP(withBIH){
+function switchP(withBIH, inKitchen=false){
   curP=curP===1?2:1;
   if(withBIH){
     bih=true; bihPos=null; gs='ballInHand';
-    document.getElementById('bihh').classList.add('show');
+    kitchen=inKitchen;
+    const bihEl=document.getElementById('bihh');
+    bihEl.textContent=inKitchen
+      ? 'Place the cue ball behind the head string (kitchen)'
+      : 'Tap anywhere on the table to place the cue ball';
+    bihEl.classList.add('show');
   }else{
     gs='playing';
   }
@@ -480,8 +573,10 @@ function silentRack(){
   curP=1; groups={1:null,2:null};
   pottedNow=[]; hasFoul=false;
   breakShot=true; tableOpen=true;
-  bih=false; firstHit=null; railHit=false;
-  rack(); gs='playing'; refreshHUD();
+  bih=false; kitchen=false; firstHit=null; railHit=false;
+  rack();
+  balls.unshift(mkBall(0,0.18,0.5)); // auto-place for re-rack
+  gs='playing'; refreshHUD();
 }
 
 function showFoul(msg){
@@ -524,10 +619,16 @@ function startGame(){
   curP=1; groups={1:null,2:null};
   pottedNow=[]; hasFoul=false;
   breakShot=true; tableOpen=true;
-  bih=false; bihPos=null;
+  bih=false; bihPos=null; kitchen=false;
   firstHit=null; railHit=false;
-  aiming=false; settling=false;
-  rack(); gs='playing'; refreshHUD();
+  aiming=false; settling=false; strikeAnim=null;
+  rack();
+  // Kitchen BIH for break placement
+  bih=true; kitchen=true; gs='ballInHand';
+  const bihEl=document.getElementById('bihh');
+  bihEl.textContent='Place the cue ball behind the head string (kitchen)';
+  bihEl.classList.add('show');
+  refreshHUD();
 }
 
 /* ════════════════════════════════════════════════════
@@ -540,7 +641,14 @@ function draw(){
   ctx.fillStyle='#0f0a04';
   ctx.fillRect(0,0,W,H);
   drawTable();
-  for(const b of balls) if(b.active) drawBall(b);
+  // Head string line during kitchen BIH
+  if(bih&&kitchen){
+    ctx.save();
+    ctx.strokeStyle='rgba(255,255,255,.45)'; ctx.lineWidth=1.5; ctx.setLineDash([6,5]);
+    ctx.beginPath(); ctx.moveTo(headX,tY); ctx.lineTo(headX,tY+tH); ctx.stroke();
+    ctx.setLineDash([]); ctx.restore();
+  }
+  for(const b of balls) if(b.active||b.sinking) drawBall(b);
   drawCue();
   if(bih) drawBIH();
 }
@@ -616,16 +724,29 @@ function rRect(x,y,w,h,r){
 
 /* Balls */
 function drawBall(b){
-  ctx.save(); ctx.translate(b.x,b.y);
-  // Top-down contact shadow: centered radial, stays within b.r (no bleed into neighbors)
-  const sg=ctx.createRadialGradient(0,0,b.r*0.6,0,0,b.r);
-  sg.addColorStop(0,'rgba(0,0,0,0)');
-  sg.addColorStop(1,'rgba(0,0,0,0.35)');
-  ctx.beginPath(); ctx.arc(0,0,b.r,0,Math.PI*2);
-  ctx.fillStyle=sg; ctx.fill();
+  // Sinking (pocket-drop) animation
+  let bx=b.x, by=b.y, sc=1, al=1;
+  if(b.sinking){
+    const p=Math.min(1,(performance.now()-b.sinkMs)/SINK_MS);
+    if(p>=1){ b.sinking=false; return; }
+    bx=b.sinkX+(b.sinkPx-b.sinkX)*p;
+    by=b.sinkY+(b.sinkPy-b.sinkY)*p;
+    sc=1-p; al=1-p;
+  }
+  ctx.save();
+  ctx.globalAlpha=al;
+  ctx.translate(bx,by);
+  ctx.scale(sc,sc);
+  if(!b.sinking){
+    const sg=ctx.createRadialGradient(0,0,b.r*0.6,0,0,b.r);
+    sg.addColorStop(0,'rgba(0,0,0,0)');
+    sg.addColorStop(1,'rgba(0,0,0,0.35)');
+    ctx.beginPath(); ctx.arc(0,0,b.r,0,Math.PI*2);
+    ctx.fillStyle=sg; ctx.fill();
+  }
+  ctx.rotate(b.ang);
   const sp=sprBalls[b.num];
   if(sp&&sp.complete&&sp.naturalWidth>0){
-    ctx.rotate(b.ang);
     ctx.drawImage(sp,-b.r,-b.r,b.r*2,b.r*2);
   }else{
     drawBallFB(b);
@@ -675,58 +796,109 @@ function lgt(hex,a){
   return `rgb(${Math.min(255,(n>>16)+a)},${Math.min(255,((n>>8)&0xff)+a)},${Math.min(255,(n&0xff)+a)})`;
 }
 
-/* Cue — slingshot controls */
-function drawCue(){
-  if(gs!=='playing'||!aiming||!aimPos) return;
-  const cue=getCue(); if(!cue) return;
+/* Cue — slingshot + strike animation + aim guides */
+function _drawStick(tipX,tipY,dragAngle,cueL,alpha){
+  ctx.save(); ctx.globalAlpha=alpha;
+  if(sprCue&&sprCue.complete&&sprCue.naturalWidth>0){
+    ctx.translate(tipX,tipY); ctx.rotate(dragAngle);
+    const ch=cueL*0.13;
+    ctx.drawImage(sprCue,0,-ch/2,cueL,ch);
+  }else{
+    const bx=tipX+Math.cos(dragAngle)*cueL;
+    const by=tipY+Math.sin(dragAngle)*cueL;
+    const g2=ctx.createLinearGradient(tipX,tipY,bx,by);
+    g2.addColorStop(0,'#d0e8f8'); g2.addColorStop(.08,'#c8a030');
+    g2.addColorStop(.5,'#d8b448'); g2.addColorStop(1,'#3a1a06');
+    ctx.strokeStyle=g2; ctx.lineWidth=6; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(tipX,tipY); ctx.lineTo(bx,by); ctx.stroke();
+  }
+  ctx.restore();
+}
 
-  // Drag vector: aimPos is where the player pulled to (behind the ball).
-  // Shoot direction is from aimPos → cue ball (and beyond).
+function drawCue(){
+  const cue=getCue();
+  const striking=strikeAnim&&(performance.now()-strikeAnim.startMs<STRIKE_MS);
+
+  // Strike animation (cue snaps forward after shot fires)
+  if(striking&&cue){
+    const p=Math.min(1,(performance.now()-strikeAnim.startMs)/STRIKE_MS);
+    const tipDist=strikeAnim.tipDist0*(1-p)+ballR*1.3*p;
+    const tx=strikeAnim.cx+Math.cos(strikeAnim.dragAngle)*tipDist;
+    const ty=strikeAnim.cy+Math.sin(strikeAnim.dragAngle)*tipDist;
+    _drawStick(tx,ty,strikeAnim.dragAngle,tW*0.46,1-p);
+    return;
+  }
+  if(strikeAnim&&!striking) strikeAnim=null;
+
+  if(gs!=='playing'||!aiming||!aimPos||!cue) return;
+
   const dx=cue.x-aimPos.x, dy=cue.y-aimPos.y;
   const pullDist=Math.hypot(dx,dy);
   if(pullDist<1) return;
 
-  const shootAngle=Math.atan2(dy,dx);        // from pull point toward cue ball
-  const dragAngle =shootAngle+Math.PI;        // from cue ball toward pull point
+  const shootAngle=Math.atan2(dy,dx);   // from pull point → cue ball → target
+  const dragAngle =shootAngle+Math.PI;  // from cue ball → pull point
 
   const powerFrac=Math.min(1,pullDist/(tW*0.28));
   document.getElementById('pwf').style.width=(powerFrac*100)+'%';
 
+  const cdx=Math.cos(shootAngle), cdy=Math.sin(shootAngle);
+  const hit=findFirstHit(cue.x,cue.y,cdx,cdy);
   const cueL=tW*0.46;
-  // Tip retreats from ball as power grows (0 → 5 ball-radii of pullback)
   const tipDist=ballR*1.3+powerFrac*ballR*5;
   const tipX=cue.x+Math.cos(dragAngle)*tipDist;
   const tipY=cue.y+Math.sin(dragAngle)*tipDist;
 
   ctx.save();
 
-  // Aim line (shoot direction)
-  ctx.strokeStyle='rgba(255,255,255,.28)'; ctx.lineWidth=1; ctx.setLineDash([9,7]);
-  ctx.beginPath();
-  ctx.moveTo(cue.x+Math.cos(shootAngle)*ballR*1.1, cue.y+Math.sin(shootAngle)*ballR*1.1);
-  ctx.lineTo(cue.x+Math.cos(shootAngle)*tW*0.42,   cue.y+Math.sin(shootAngle)*tW*0.42);
-  ctx.stroke(); ctx.setLineDash([]);
+  if(hit){
+    const gx=cue.x+cdx*hit.t, gy=cue.y+cdy*hit.t;
 
-  // Ghost ball
-  ctx.beginPath();
-  ctx.arc(cue.x+Math.cos(shootAngle)*ballR*2.8, cue.y+Math.sin(shootAngle)*ballR*2.8, ballR, 0, Math.PI*2);
-  ctx.strokeStyle='rgba(255,255,255,.2)'; ctx.lineWidth=1.5; ctx.stroke();
+    // Cue ball path: from cue to ghost position
+    ctx.strokeStyle='rgba(255,255,255,.28)'; ctx.lineWidth=1; ctx.setLineDash([9,7]);
+    ctx.beginPath();
+    ctx.moveTo(cue.x+cdx*ballR*1.1, cue.y+cdy*ballR*1.1);
+    ctx.lineTo(gx, gy);
+    ctx.stroke(); ctx.setLineDash([]);
 
-  // Cue stick: tip near ball, butt toward pull point
-  if(sprCue&&sprCue.complete&&sprCue.naturalWidth>0){
-    ctx.translate(tipX,tipY); ctx.rotate(dragAngle);
-    const ch=cueL*0.13;
-    ctx.drawImage(sprCue,0,-ch/2,cueL,ch);
+    // Ghost ball
+    ctx.beginPath(); ctx.arc(gx,gy,ballR,0,Math.PI*2);
+    ctx.strokeStyle='rgba(255,255,255,.28)'; ctx.lineWidth=1.5; ctx.stroke();
+
+    // Line of centres → object ball direction
+    const locDx=hit.ball.x-gx, locDy=hit.ball.y-gy;
+    const locLen=Math.hypot(locDx,locDy)||1;
+    const lnx=locDx/locLen, lny=locDy/locLen;
+
+    // Object ball trajectory (yellow-ish dashed)
+    ctx.strokeStyle='rgba(255,210,55,.4)'; ctx.lineWidth=1.5; ctx.setLineDash([8,6]);
+    ctx.beginPath();
+    ctx.moveTo(hit.ball.x, hit.ball.y);
+    ctx.lineTo(hit.ball.x+lnx*tW*0.55, hit.ball.y+lny*tW*0.55);
+    ctx.stroke(); ctx.setLineDash([]);
+
+    // Cue ball tangent (90° to LOC — stun-shot approximation)
+    const cross=cdx*lny-cdy*lnx;
+    const tnx=cross>0? lny:-lny, tny=cross>0?-lnx: lnx;
+    ctx.strokeStyle='rgba(255,255,255,.18)'; ctx.lineWidth=1; ctx.setLineDash([5,8]);
+    ctx.beginPath();
+    ctx.moveTo(gx, gy);
+    ctx.lineTo(gx+tnx*tW*0.3, gy+tny*tW*0.3);
+    ctx.stroke(); ctx.setLineDash([]);
   }else{
-    const buttX=tipX+Math.cos(dragAngle)*cueL;
-    const buttY=tipY+Math.sin(dragAngle)*cueL;
-    const g2=ctx.createLinearGradient(tipX,tipY,buttX,buttY);
-    g2.addColorStop(0,'#d0e8f8'); g2.addColorStop(.08,'#c8a030');
-    g2.addColorStop(.5,'#d8b448'); g2.addColorStop(1,'#3a1a06');
-    ctx.strokeStyle=g2; ctx.lineWidth=6; ctx.lineCap='round';
-    ctx.beginPath(); ctx.moveTo(tipX,tipY); ctx.lineTo(buttX,buttY); ctx.stroke();
+    // No object ball in path — plain aim line + ghost ball near end
+    ctx.strokeStyle='rgba(255,255,255,.28)'; ctx.lineWidth=1; ctx.setLineDash([9,7]);
+    ctx.beginPath();
+    ctx.moveTo(cue.x+cdx*ballR*1.1, cue.y+cdy*ballR*1.1);
+    ctx.lineTo(cue.x+cdx*tW*0.9,    cue.y+cdy*tW*0.9);
+    ctx.stroke(); ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.arc(cue.x+cdx*ballR*2.8, cue.y+cdy*ballR*2.8, ballR, 0, Math.PI*2);
+    ctx.strokeStyle='rgba(255,255,255,.2)'; ctx.lineWidth=1.5; ctx.stroke();
   }
+
   ctx.restore();
+  _drawStick(tipX,tipY,dragAngle,cueL,1);
 }
 
 /* Ball-in-hand ghost */
@@ -810,13 +982,23 @@ function onUp(e){
   const dx=cue.x-aimPos.x, dy=cue.y-aimPos.y;
   const dist=Math.hypot(dx,dy);
   if(dist<ballR*0.5) return; // ignore accidental taps
-  const angle=Math.atan2(dy,dx);  // from pull point toward cue ball = shoot direction
-  const power=Math.min(MAX_POWER,(dist/(tW*0.28))*MAX_POWER);
+  const angle=Math.atan2(dy,dx);
+  const dragAngle=angle+Math.PI;
+  const powerFrac=Math.min(1,dist/(tW*0.28));
+  const power=powerFrac*MAX_POWER;
+  // Store strike animation params before shoot() clears cue velocity
+  strikeAnim={
+    cx:cue.x, cy:cue.y,
+    dragAngle,
+    tipDist0:ballR*1.3+powerFrac*ballR*5,
+    startMs:performance.now()
+  };
   shoot(power,angle);
 }
 
 function validBIH(x,y){
   if(x<tX+ballR||x>tX+tW-ballR||y<tY+ballR||y>tY+tH-ballR) return false;
+  if(kitchen&&x>=headX) return false; // must stay in kitchen (behind head string)
   for(const b of balls){
     if(b.num===0||!b.active) continue;
     if(Math.hypot(x-b.x,y-b.y)<ballR*2.15) return false;
@@ -832,7 +1014,7 @@ function placeCue(x,y){
   if(!c){ c=mkBall(0,0,0); balls.unshift(c); }
   c.x=x; c.y=y; c.nx=(x-tX)/tW; c.ny=(y-tY)/tH;
   c.vx=0; c.vy=0; c.active=true; c.potted=false;
-  bih=false; bihPos=null; gs='playing';
+  bih=false; bihPos=null; kitchen=false; gs='playing';
   document.getElementById('bihh').classList.remove('show');
   refreshHUD();
 }
