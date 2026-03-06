@@ -280,14 +280,15 @@ function mkBall(num,nx,ny){
 function rack(){
   balls=[];
   const fx=0.75,fy=0.5;
-  const sp=(ballR*2.04)/tW;
+  const spX=(ballR*2.04)/tW;  // normalized spacing along tW axis
+  const spY=(ballR*2.04)/tH;  // normalized spacing along tH axis (tW≠tH, must be separate)
   const s60=Math.sqrt(3)/2;
-  const layout=[[1],[9,2],[3,8,10],[4,11,5,12],[13,6,14,7,15]];
+  const layout=[[1],[2,9],[3,8,10],[4,14,5,11],[7,13,6,12,15]]; // corners: 7(solid)+15(stripe) ✓
   for(let row=0;row<layout.length;row++){
     const ra=layout[row];
     for(let col=0;col<ra.length;col++){
-      const nx=fx+row*sp*s60;
-      const ny=fy+(col-(ra.length-1)/2)*sp;
+      const nx=fx+row*spX*s60;
+      const ny=fy+(col-(ra.length-1)/2)*spY;
       balls.push(mkBall(ra[col],nx,ny));
     }
   }
