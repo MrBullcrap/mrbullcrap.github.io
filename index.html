@@ -155,7 +155,7 @@ const MIN_SPEED    = 0.12;
 const BALL_R_FRAC  = 1/56;      // ≈0.01786 → ~1.6× real BCA scale (real: 1.125/100=0.01125)
 const CANVAS_AR    = 117/69;    // ≈1.696 → tile tsY=tsX×69/65 gives exactly 2:1 playing surface
 const HUD_H        = 44;
-const MAX_POWER    = 24;
+const MAX_POWER    = 15;
 const STRIKE_MS    = 90;    // cue-forward animation duration on release
 const SINK_MS      = 380;   // pocket-drop animation duration
 
@@ -371,35 +371,51 @@ function getCue(){ return balls.find(b=>b.num===0&&b.active); }
    PHYSICS
 ════════════════════════════════════════════════════ */
 function physStep(){
+  // Sub-step count: ensure no ball moves more than ballR per sub-step (prevents tunnelling)
+  let maxSpd=0;
+  for(const b of balls) if(b.active) maxSpd=Math.max(maxSpd,Math.hypot(b.vx,b.vy));
+  const steps=Math.max(1,Math.ceil(maxSpd/ballR));
+  const inv=1/steps;
+
+  for(let s=0;s<steps;s++){
+    // Move (fractional)
+    for(const b of balls){
+      if(!b.active) continue;
+      b.x+=b.vx*inv; b.y+=b.vy*inv;
+      b.ang+=Math.hypot(b.vx,b.vy)*inv*0.22;
+      wallBounce(b);
+    }
+    // Ball-ball collisions
+    for(let i=0;i<balls.length-1;i++){
+      if(!balls[i].active) continue;
+      for(let j=i+1;j<balls.length;j++){
+        if(!balls[j].active) continue;
+        resolvePair(balls[i],balls[j]);
+      }
+    }
+    // Pocket check
+    for(const b of balls){
+      if(!b.active) continue;
+      for(const p of pockets){
+        if(Math.hypot(b.x-p.x,b.y-p.y)<pocketR){ sinkBall(b); break; }
+      }
+    }
+  }
+
+  // Friction + stop threshold applied once per frame (not per sub-step)
   for(const b of balls){
     if(!b.active) continue;
-    b.x+=b.vx; b.y+=b.vy;
     b.vx*=FRICTION; b.vy*=FRICTION;
     const spd=Math.hypot(b.vx,b.vy);
     if(spd<MIN_SPEED){b.vx=0;b.vy=0;}
-    b.ang+=spd*0.22;
-    wallBounce(b);
   }
-  for(let i=0;i<balls.length-1;i++){
-    if(!balls[i].active) continue;
-    for(let j=i+1;j<balls.length;j++){
-      if(!balls[j].active) continue;
-      resolvePair(balls[i],balls[j]);
-    }
-  }
+
   // Rail detection
   if(gs==='animating'&&firstHit!==null){
     for(const b of balls){
       if(!b.active) continue;
       if(b.x<=tX+b.r+2||b.x>=tX+tW-b.r-2||
          b.y<=tY+b.r+2||b.y>=tY+tH-b.r-2) railHit=true;
-    }
-  }
-  // Pocket check
-  for(const b of balls){
-    if(!b.active) continue;
-    for(const p of pockets){
-      if(Math.hypot(b.x-p.x,b.y-p.y)<pocketR){ sinkBall(b); break; }
     }
   }
 }
