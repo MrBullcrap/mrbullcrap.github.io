@@ -251,10 +251,10 @@ function resize(){
 
 function buildPockets(){
   // Pocket centres from pixel analysis of pocket tiles; x fractions use tsX, y use tsY.
-  // Corner pocket hole centres: col-fraction × tsX, row-fraction × tsY.
-  // BCA pocket mouth ≈ 4.625" (corner), ball dia 2.25" → pocketR/ballR ≈ 2.1
+  // Visual pocket hole radius = tsX×0.3884 (from sprite pixel measurement).
+  // Physics hitbox matches the visual so balls sink exactly when they enter the hole.
   const tsX=railPx, tsY=railPxY;
-  pocketR=ballR*2.1;
+  pocketR=tsX*0.3884;
   pockets=[
     {x:tsX*0.5271,  y:tsY*0.5271},  // TL corner
     {x:tsX*8.4715,  y:tsY*0.5271},  // TR corner
